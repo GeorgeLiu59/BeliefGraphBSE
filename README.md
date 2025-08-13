@@ -74,7 +74,7 @@ python analyze_performance.py file1.csv file2.csv  # Analyze specific files
 - Performance visualization (`agent_performance_analysis.png`)
 - Transaction statistics and market analysis
 
-This tool enables researchers to systematically evaluate different trading strategies and understand market dynamics in the BSE simulation environment.
+This tool helps us understand the unstructured output from running BSE.
 
 
  
