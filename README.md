@@ -1,5 +1,42 @@
 Fork of https://github.com/davecliff/BristolStockExchange with Beliefs Graphs added to agents.
 
+## Getting Started
+
+### Running the BSE Simulation
+
+1. **Basic Simulation:**
+   ```bash
+   python BSE.py
+   ```
+   This runs a default market session with various trading agents.
+
+2. **Custom Parameters:**
+   ```bash
+   python BSE.py [price_offset_filename]
+   ```
+   Run with custom price offset data (see `Offsets_BTC_USD/` for examples).
+
+3. **Demo Notebook:**
+   ```bash
+   jupyter notebook BSE_VernonSmith1962_demo.ipynb
+   ```
+   Interactive walkthrough of the BSE system and Vernon Smith's experiments.
+
+### Analyzing Results
+
+After running a simulation, analyze the results:
+```bash
+python analyze_performance.py
+```
+This generates performance metrics and visualizations from the simulation output files.
+
+### Key Files
+
+- `BSE.py`: Main simulation engine
+- `BSE_VernonSmith1962_demo.ipynb`: Interactive tutorial
+- `analyze_performance.py`: Performance analysis tool
+- `belief_graph.py`: Belief graph implementation
+
 ## New Contributions
 
 ### Explicit Belief Graph State Management for LLM Market Agents
@@ -14,7 +51,7 @@ A novel belief graph implementation that enables LLM-based trading agents to mai
 
 **Files:**
 - `belief_graph.py`: Main implementation
-- `BELIEF_GRAPH_README.md`: Detailed documentation and usage examples
+- `BELIEF_GRAPH.md`: Detailed documentation and usage examples
 
 ### Performance Analysis Tool
 
