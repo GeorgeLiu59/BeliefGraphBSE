@@ -16,12 +16,6 @@ Fork of https://github.com/davecliff/BristolStockExchange with Beliefs Graphs ad
    ```
    Run with custom price offset data (see `Offsets_BTC_USD/` for examples).
 
-3. **Demo Notebook:**
-   ```bash
-   jupyter notebook BSE_VernonSmith1962_demo.ipynb
-   ```
-   Interactive walkthrough of the BSE system and Vernon Smith's experiments.
-
 ### Analyzing Results
 
 After running a simulation, analyze the results:
