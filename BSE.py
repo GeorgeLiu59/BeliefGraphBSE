@@ -58,6 +58,17 @@ import time as chrono
 import csv
 from datetime import datetime
 
+# LLM and belief graph imports
+import google.generativeai as genai
+from belief_graph import BeliefGraph, MarketEvent, EventType
+import uuid
+import json
+import re
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 # a bunch of system constants (globals)
 bse_sys_minprice = 1                    # minimum price in the system, in cents/pennies
 bse_sys_maxprice = 500                  # maximum price in the system, in cents/pennies
@@ -2101,7 +2112,7 @@ class TraderPT1(Trader):
     2.2.2   (remember the purchase-price I paid for it)
     2.3 else if (I am holding a unit)
     2.4 then
-    2.4.1   (my asking-price is that unit’s purchase-price plus my profit margin)
+    2.4.1   (my asking-price is that unit's purchase-price plus my profit margin)
     2.4.1   if (best bid price is more than my asking price)
     2.4.1   then
     2.4.1.1    (sell my unit -- hit the bid)
@@ -2160,7 +2171,7 @@ class TraderPT1(Trader):
         if countdown < 0:
             sys.exit('Negative countdown')
 
-        if len(self.orders) < 1 or time < 5 * 60:
+        if len(self.orders) < 1 or time < 0.5 * 60:
             order = None
         else:
             quoteprice = self.orders[0].price
@@ -2311,7 +2322,7 @@ class TraderPT2(Trader):
     2.2.2   (remember the purchase-price I paid for it)
     2.3 else if (I am holding a unit)
     2.4 then
-    2.4.1   (my asking-price is that unit’s purchase-price plus my profit margin)
+    2.4.1   (my asking-price is that unit's purchase-price plus my profit margin)
     2.4.1   if (best bid price is more than my asking price)
     2.4.1   then
     2.4.1.1    (sell my unit -- hit the bid)
@@ -2370,7 +2381,7 @@ class TraderPT2(Trader):
         if countdown < 0:
             sys.exit('Negative countdown')
 
-        if len(self.orders) < 1 or time < 5 * 60:
+        if len(self.orders) < 1 or time < 0.5 * 60:
             order = None
         else:
             quoteprice = self.orders[0].price
@@ -2506,6 +2517,240 @@ class TraderPT2(Trader):
 
 # ########################---trader-types have all been defined now--################
 
+# LLM Trader Classes
+class TraderLLM(Trader):
+    """
+    Baseline LLM Trader: Uses Google's Generative AI without explicit belief graph state management.
+    
+    This serves as the control condition for the research experiment.
+    """
+
+    def __init__(self, ttype, tid, balance, params, time):
+        """
+        Initialize the baseline LLM trader
+        :param ttype: the trader type
+        :param tid: the trader I.D.
+        :param balance: starting balance
+        :param params: parameters including API key and model settings
+        :param time: current time
+        """
+        Trader.__init__(self, ttype, tid, balance, params, time)
+        
+        # Default parameters
+        self.api_key = None
+        self.model_name = 'gemini-2.5-flash-lite'
+        self.max_retries = 3
+        self.timeout = 30
+        self.temperature = 0.7
+        self.max_tokens = 1000
+        
+        # Parse parameters if provided
+        if params is not None:
+            if 'api_key' in params:
+                self.api_key = params['api_key']
+            if 'model_name' in params:
+                self.model_name = params['model_name']
+            if 'temperature' in params:
+                self.temperature = params['temperature']
+            if 'max_tokens' in params:
+                self.max_tokens = params['max_tokens']
+        
+        # If no API key provided, try to get from environment
+        if not self.api_key:
+            self.api_key = os.getenv('GOOGLE_API_KEY')
+        
+        # Initialize the LLM
+        if self.api_key:
+            genai.configure(api_key=self.api_key)
+            self.model = genai.GenerativeModel(self.model_name)
+            print(f"Initialized LLM trader {tid} with model {self.model_name}")
+        else:
+            print(f"Warning: No API key provided for LLM trader {tid}")
+            self.model = None
+        
+        # Trading history for context
+        self.trading_history = []
+        self.max_history = 50
+        
+        # Debug settings
+        self.debug_mode = False  # Set to True to print LLM decisions
+
+    def _format_market_data(self, lob, time, countdown):
+        """
+        Format market data for the LLM (unstructured baseline)
+        :param lob: limit order book data
+        :param time: current time
+        :param countdown: time remaining
+        :return: unstructured data string
+        """
+        # Just dump the raw data without any formatting
+        market_info = f"Time: {time}, Countdown: {countdown}\n"
+        market_info += f"Raw LOB data: {lob}\n"
+        market_info += f"Recent tape entries: {lob['tape'][-10:] if len(lob['tape']) > 0 else []}\n"
+        
+        return market_info
+
+    def _format_trader_context(self):
+        """
+        Format trader's current context for the LLM (unstructured baseline)
+        :return: unstructured data string
+        """
+        # Just dump the raw trader data without any formatting
+        context = f"Trader ID: {self.tid}\n"
+        context += f"Balance: {self.balance}\n"
+        context += f"Trades: {self.n_trades}\n"
+        context += f"Profit per time: {self.profitpertime}\n"
+        context += f"Orders: {self.orders}\n"
+        context += f"Last quote: {self.lastquote}\n"
+        
+        return context
+
+    def _get_llm_decision(self, market_data, trader_context):
+        """
+        Get trading decision from the LLM (baseline version without belief graph)
+        :param market_data: formatted market data
+        :param trader_context: formatted trader context
+        :return: dictionary with decision
+        """
+        prompt = f"""
+You are trading in a market simulation. Here's the raw data:
+
+{market_data}
+
+{trader_context}
+
+What price should you quote? Just respond with a number or explain why you can't decide.
+"""
+
+        response = self.model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=self.temperature,
+                max_output_tokens=self.max_tokens
+            )
+        )
+        
+        # Parse the response
+        response_text = response.text.strip()
+        
+        # Debug: Print the raw LLM response
+        if self.debug_mode:
+            print(f"\n=== LLM DECISION DEBUG ({self.tid}) ===")
+            print(f"Raw LLM Response: {response_text}")
+        
+        # Extract price from raw text response
+        price = None
+        reasoning = response_text
+        
+        # Try to find a number in the response
+        import re
+        numbers = re.findall(r'\d+', response_text)
+        if numbers:
+            try:
+                price = int(numbers[0])  # Take the first number found
+                reasoning = f"Found price {price} in response: {response_text}"
+            except ValueError:
+                reasoning = f"Could not parse price from response: {response_text}"
+        else:
+            reasoning = f"No price found in response: {response_text}"
+        
+        decision = {
+            'quote_price': price,
+            'confidence': 0.5,  # Default confidence
+            'reasoning': reasoning
+        }
+        
+        # Debug: Print the parsed decision
+        if self.debug_mode:
+            print(f"Parsed Decision: {decision}")
+            print(f"Quote Price: {decision['quote_price']}")
+            print(f"Reasoning: {decision['reasoning']}")
+            print("=" * 50)
+        
+        return decision
+
+
+
+    def getorder(self, time, countdown, lob):
+        """
+        Create this trader's order to be sent to the exchange.
+        :param time: the current time.
+        :param countdown: how much time before market closes.
+        :param lob: the current state of the LOB.
+        :return: a new order from this trader.
+        """
+        if len(self.orders) < 1:
+            return None
+        
+        # Format market data and trader context
+        market_data = self._format_market_data(lob, time, countdown)
+        trader_context = self._format_trader_context()
+        
+        # Get decision from LLM
+        decision = self._get_llm_decision(market_data, trader_context)
+        
+        # Log the decision
+        self.trading_history.append({
+            'time': time,
+            'decision': decision
+        })
+        
+        # Keep history manageable
+        if len(self.trading_history) > self.max_history:
+            self.trading_history = self.trading_history[-self.max_history:]
+        
+        # Create order based on LLM decision
+        if decision['quote_price'] is not None:
+            order = self.orders[0]
+            quoteprice = int(decision['quote_price'])
+            
+            # Ensure price is within valid range
+            quoteprice = max(1, min(500, quoteprice))
+            
+            # Ensure we don't violate limit price
+            if order.otype == 'Bid' and quoteprice > order.price:
+                quoteprice = order.price
+            elif order.otype == 'Ask' and quoteprice < order.price:
+                quoteprice = order.price
+            
+            new_order = Order(self.tid, order.otype, quoteprice, order.qty, time, lob['QID'])
+            self.lastquote = new_order
+            
+            # Debug: Print the final order that will be sent to exchange
+            if self.debug_mode:
+                print(f"\n=== ORDER EXECUTION DEBUG ({self.tid}) ===")
+                print(f"Original Decision Price: {decision['quote_price']}")
+                print(f"Final Quote Price: {quoteprice}")
+                print(f"Order Type: {order.otype}")
+                print(f"Limit Price: {order.price}")
+                print(f"Order: {new_order}")
+                print("=" * 50)
+            
+            return new_order
+        
+        return None
+
+    def respond(self, time, lob, trade, vrbs):
+        """
+        Respond to market events (baseline version)
+        :param time: current time
+        :param lob: limit order book
+        :param trade: recent trade (if any)
+        :param vrbs: verbosity
+        :return: None
+        """
+        # Update profit per time
+        self.profitpertime = self.profitpertime_update(time, self.birthtime, self.balance)
+        
+        # Log trade if it occurred
+        if trade:
+            self.trading_history.append({
+                'time': time,
+                'event': 'trade',
+                'trade': trade
+            })
+        
+        return None
 
 # #########################---Below lies the experiment/test-rig---##################
 
@@ -2606,6 +2851,8 @@ def populate_market(trdrs_spec, traders, shuffle, vrbs):
             return TraderPT1('PT1', name, proptrader_balance, parameters, time0)
         elif robottype == 'PT2':
             return TraderPT2('PT2', name, proptrader_balance, parameters, time0)
+        elif robottype == 'LLM':
+            return TraderLLM('LLM', name, balance, parameters, time0)
         else:
             sys.exit('FATAL: don\'t know trader type %s\n' % robottype)
 
@@ -3128,13 +3375,17 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     # frames_done is record of what frames we have printed data for thus far
     frames_done = set()
 
+    # Progress tracking
+    total_timesteps = int((endtime - starttime) / timestep)
+    current_timestep = 0
+
     while time < endtime:
 
-        # how much time left, as a percentage?
         time_left = (endtime - time) / session_duration
-
-        if sess_vrbs:
-            print('\n\n%s; t=%08.2f (%4.1f/100) ' % (sess_id, time, time_left*100))
+        
+        current_timestep += 1
+        if current_timestep % 1000 == 0:  # Every 1k timesteps
+            print(f"Progress: {current_timestep:,}/{total_timesteps:,} ({current_timestep/total_timesteps*100:.1f}%)")
 
         [pending_cust_orders, kills] = customer_orders(time, traders, trader_stats,
                                                        order_schedule, pending_cust_orders, orders_verbose)
@@ -3223,8 +3474,7 @@ if __name__ == "__main__":
         price_offset_filename = sys.argv[1]
 
     # set up common parameters for all market sessions
-    # 1000 days is often good, but 3*365=1095, so may as well go for three years.
-    n_days = 1
+    n_days = 1/480
     hours_in_a_day = 24     # how many hours the exchange operates for in a working day (e.g. NYSE = 7.5)
     start_time = 0.0
     end_time = 60.0 * 60.0 * hours_in_a_day * n_days
@@ -3410,14 +3660,16 @@ if __name__ == "__main__":
         trial_id = 'bse_d%03d_i%02d_%04d' % (n_days, order_interval, trial)
 
         # buyer_spec specifies the strategies played by buyers, and for each strategy how many such buyers to create
-        buyers_spec = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 13)]
+        buyers_spec = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11), ('LLM', 1)]
         #     ('PRZI', 5, {'s_min': -1.0, 's_max': +1.0})]
 
         # seller_spec specifies the strategies played by sellers, and for each strategy how many such sellers to create
         sellers_spec = buyers_spec
 
         # proptraders_spec specifies strategies played by proprietary-traders, and how many of each
-        proptraders_spec = [('PT1', 1, {'bid_percent': 0.95, 'ask_delta': 7}), ('PT2', 1, {'n_past_trades': 25})]
+        proptraders_spec = [('PT1', 1, {'bid_percent': 0.95, 'ask_delta': 7}), 
+                           ('PT2', 1, {'n_past_trades': 25}),
+                           ('LLM', 1)]
 
         # trader_spec wraps up the specifications for the buyers, sellers, and proptraders
         traders_spec = {'sellers': sellers_spec, 'buyers': buyers_spec, 'proptraders': proptraders_spec}
