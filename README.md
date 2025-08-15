@@ -18,7 +18,7 @@ Fork of https://github.com/davecliff/BristolStockExchange with Beliefs Graphs ad
    GOOGLE_API_KEY=your_google_generative_ai_api_key_here
    ```
    
-   **Note:** You'll need a Google Generative AI API key to use the LLM traders. Get one from [Google AI Studio](https://makersuite.google.com/app/apikey).
+   **Note:** You'll need a Google Generative AI API key to use the LLM traders.
 
 ## Getting Started
 
