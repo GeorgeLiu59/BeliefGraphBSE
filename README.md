@@ -97,7 +97,6 @@ The `analyze_performance.py` script provides comprehensive analysis of BSE simul
 **Usage:**
 ```bash
 python analyze_performance.py                    # Analyze default files
-python analyze_performance.py file1.csv file2.csv  # Analyze specific files
 ```
 
 **Output:**
