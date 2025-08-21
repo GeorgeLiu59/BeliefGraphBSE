@@ -2607,6 +2607,18 @@ class TraderLLMProp(Trader):
         best_ask = lob['asks']['best'] if lob['asks']['n'] > 0 else None
         bid_ask_spread = (best_ask - best_bid) if (best_bid and best_ask) else None
         
+        # Analyze trader activity
+        trade_analysis = self.analyze_recent_trades(lob, n_trades=10)
+        trader_activity = trade_analysis['trader_activity']
+        
+        # Format trader activity information
+        trader_info = ""
+        if trader_activity:
+            trader_info = "RECENT TRADER ACTIVITY:\n"
+            for trader_id, activity in trader_activity.items():
+                if trader_id != self.tid:  # Don't show our own activity
+                    trader_info += f"Trader {trader_id}: {activity['trades']} trades, avg price ${activity['avg_price']:.1f}\n"
+        
         # Clear state reporting
         context = f"""MARKET DATA:
 Time: {time:.1f}
@@ -2616,6 +2628,7 @@ Spread: {bid_ask_spread}
 Recent prices: {recent_prices}
 Average recent price: {avg_price_str}
 
+{trader_info}
 MY CURRENT STATE:
 Balance: ${self.balance}
 Current job: {self.job}
@@ -2682,6 +2695,11 @@ MARKET EDUCATION:
 - You started with $500 - consider how your current balance reflects your trading performance
 - Successful prop traders typically aim for small, consistent profits rather than big gambles
 
+TRADER ANALYSIS:
+- Pay attention to which other traders are active and their average prices
+- Analyze their trading patterns and use this information to inform your decisions
+- Consider what their activity might indicate about market conditions
+
 HOW ORDER BOOKS WORK:
 - To BUY: Place a BID order at your desired price
 - If sellers exist at/below your bid price → immediate execution
@@ -2693,6 +2711,7 @@ TRADING PRINCIPLES TO CONSIDER:
 - Risk management: avoid spending your entire balance on one trade
 - Learn from history: if recent trades lost money, consider what went wrong
 - Liquidity: sometimes waiting for better prices is smarter than forcing trades
+- Trader behavior: analyze other traders' activity and draw your own conclusions
 
 Respond with ONLY:
 "BUY [exact_price]" - to place a bid at that price
@@ -2715,6 +2734,11 @@ MARKET EDUCATION:
 - You started with $500 - your current balance shows your trading track record
 - Every sale is an opportunity to learn and improve your strategy
 
+TRADER ANALYSIS:
+- Pay attention to which other traders are active and their average prices
+- Analyze their trading patterns and use this information to inform your decisions
+- Consider what their activity might indicate about market demand
+
 HOW ORDER BOOKS WORK:
 - To SELL: Place an ASK order at your desired price
 - If buyers exist at/above your ask price → immediate execution  
@@ -2733,6 +2757,7 @@ TRADING PRINCIPLES TO CONSIDER:
 - Market conditions: is the market trending up or down?
 - Patience vs urgency: waiting might get a better price, or price might fall further
 - Learning: what does this trade teach you about timing and pricing?
+- Trader behavior: analyze other traders' activity and draw your own conclusions
 
 Respond with ONLY:
 "SELL [exact_price]" - to place an ask at that price  
@@ -2958,6 +2983,84 @@ No explanation needed."""
 
         # Clear the executed order
         self.del_order(order)
+
+    def analyze_recent_trades(self, lob, n_trades=10):
+        """
+        Analyze recent trades to understand market activity and trader behavior
+        :param lob: the current limit order book
+        :param n_trades: number of recent trades to analyze
+        :return: dictionary with analysis results
+        """
+        if not lob['tape']:
+            return {'trader_activity': {}, 'trade_patterns': {}}
+        
+        # Get recent trades
+        recent_trades = []
+        tape_position = -1
+        n_analyzed = 0
+        
+        while n_analyzed < n_trades and abs(tape_position) < len(lob['tape']):
+            if lob['tape'][tape_position]['type'] == 'Trade':
+                trade = lob['tape'][tape_position]
+                recent_trades.append(trade)
+                n_analyzed += 1
+            tape_position -= 1
+        
+        if not recent_trades:
+            return {'trader_activity': {}, 'trade_patterns': {}}
+        
+        # Analyze trader activity
+        trader_activity = {}
+        trader_prices = {}
+        
+        for trade in recent_trades:
+            # Count trades by trader
+            for party in ['party1', 'party2']:
+                trader_id = trade[party]
+                if trader_id not in trader_activity:
+                    trader_activity[trader_id] = {'trades': 0, 'total_volume': 0}
+                trader_activity[trader_id]['trades'] += 1
+                trader_activity[trader_id]['total_volume'] += trade['qty']
+                
+                # Track prices by trader
+                if trader_id not in trader_prices:
+                    trader_prices[trader_id] = []
+                trader_prices[trader_id].append(trade['price'])
+        
+        # Calculate average prices for each trader
+        for trader_id in trader_prices:
+            avg_price = sum(trader_prices[trader_id]) / len(trader_prices[trader_id])
+            trader_activity[trader_id]['avg_price'] = avg_price
+            trader_activity[trader_id]['price_range'] = {
+                'min': min(trader_prices[trader_id]),
+                'max': max(trader_prices[trader_id])
+            }
+        
+        # Analyze trade patterns
+        trade_patterns = {
+            'total_trades': len(recent_trades),
+            'price_trend': 'stable',
+            'volume_trend': 'stable'
+        }
+        
+        if len(recent_trades) >= 2:
+            # Simple trend analysis
+            first_half = recent_trades[:len(recent_trades)//2]
+            second_half = recent_trades[len(recent_trades)//2:]
+            
+            first_avg = sum(t['price'] for t in first_half) / len(first_half)
+            second_avg = sum(t['price'] for t in second_half) / len(second_half)
+            
+            if second_avg > first_avg * 1.02:  # 2% increase
+                trade_patterns['price_trend'] = 'increasing'
+            elif second_avg < first_avg * 0.98:  # 2% decrease
+                trade_patterns['price_trend'] = 'decreasing'
+        
+        return {
+            'trader_activity': trader_activity,
+            'trade_patterns': trade_patterns,
+            'recent_trades': recent_trades
+        }
 
 # #########################---Below lies the experiment/test-rig---##################
 
