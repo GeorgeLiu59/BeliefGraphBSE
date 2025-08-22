@@ -31,26 +31,30 @@ class GeminiController:
         self.temperature = kwargs.get('temperature', 0.7)
         self.max_tokens = kwargs.get('max_tokens', 1000)
     
-    async def async_batch_prompt(self, system_message: str, user_messages: List[str]) -> List[List[str]]:
+    async def async_batch_prompt(self, expertise: str, messages: List[str], temperature: float = None) -> List[str]:
         """
-        EQUIVALENT: async_batch_prompt interface from HM AsyncGPTController
+        EXACT MIRROR: HM's async_batch_prompt interface
         
         Args:
-            system_message: System prompt/context
-            user_messages: List of user messages to process
+            expertise: System message/expertise (equivalent to system_message in our context)
+            messages: List of user messages to process  
+            temperature: Optional temperature override
             
         Returns:
-            List of responses, each wrapped in a list for HM compatibility
+            List of response strings (not wrapped in lists like original HM)
             
         Raises:
             RuntimeError: If API call fails
         """
+        if temperature is None:
+            temperature = self.temperature
+            
         responses = []
         
-        for user_msg in user_messages:
+        for user_msg in messages:
             try:
-                # Combine system and user messages for Gemini
-                full_prompt = f"{system_message}\n\n{user_msg}"
+                # Combine expertise and user messages for Gemini
+                full_prompt = f"{expertise}\n\n{user_msg}"
                 
                 # Import here to avoid circular imports
                 import google.generativeai as genai
@@ -58,11 +62,11 @@ class GeminiController:
                 response = self.model.generate_content(
                     full_prompt,
                     generation_config=genai.types.GenerationConfig(
-                        temperature=self.temperature,
+                        temperature=temperature,
                         max_output_tokens=self.max_tokens
                     )
                 )
-                responses.append([response.text])
+                responses.append(response.text)
                 
             except Exception as e:
                 raise RuntimeError(f"Gemini API call failed: {e}")
