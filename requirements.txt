@@ -2,3 +2,4 @@ google-generativeai>=0.8.0
 python-dotenv>=1.0.0
 numpy>=1.21.0
 matplotlib>=3.5.0
+omegaconf>=2.3.0

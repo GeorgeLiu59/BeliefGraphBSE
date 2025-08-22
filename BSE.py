@@ -66,6 +66,13 @@ import json
 import re
 from dotenv import load_dotenv
 
+# Logging imports
+import logging
+from logging_config import TraderLogger, setup_logging
+
+# Import modular HM trader
+from hm_trader import TraderLLM_HM
+
 # Load environment variables from .env file
 load_dotenv()
 
@@ -635,6 +642,12 @@ class Trader:
         # any trader subclass with custom respond() must include this update of profitpertime
         self.profitpertime = self.profitpertime_update(time, self.birthtime, self.balance)
         return None
+    
+    def extract_dict(self, response):
+        """
+        Debug method to catch unexpected calls to extract_dict by non-LLM traders
+        """
+        raise ValueError(f"ERROR: Trader {self.tid} (type {self.ttype}) is calling extract_dict but shouldn't be! This indicates a bug in trader assignment or method inheritance.")
 
 
 class TraderGiveaway(Trader):
@@ -2554,13 +2567,16 @@ class TraderLLMProp(Trader):
         if not self.api_key:
             self.api_key = os.getenv('GOOGLE_API_KEY')
         
+        # Initialize logger FIRST (before any logging calls)
+        self.trader_logger = TraderLogger(tid, ttype)
+        
         # Initialize the LLM
         if self.api_key:
             genai.configure(api_key=self.api_key)
             self.model = genai.GenerativeModel(self.model_name)
-            print(f"Initialized LLM prop trader {tid} with model {self.model_name}")
+            self.trader_logger.print_style_log('info', f"Initialized LLM prop trader {tid} with model {self.model_name}")
         else:
-            print(f"Warning: No API key provided for LLM prop trader {tid}")
+            self.trader_logger.print_style_log('warning', f"Warning: No API key provided for LLM prop trader {tid}")
             self.model = None
         
         # Proprietary trading state (similar to PT1/PT2)
@@ -2581,9 +2597,9 @@ class TraderLLMProp(Trader):
                 self.n_past_trades = params['n_past_trades']
             if 'min_profit_margin' in params:
                 self.min_profit_margin = params['min_profit_margin']
-        
-        # Debug mode
-        self.debug_mode = False
+         
+        # Debug
+        self.debug_mode = params.get('debug_mode', False) if params else False
 
     def _format_market_context(self, lob, time):
         """
@@ -2873,7 +2889,7 @@ No explanation needed."""
             'decision': decision['action'],
             'reasoning': decision['reasoning']
         })
-        
+
         # Keep history manageable
         if len(self.trading_history) > self.max_history:
             self.trading_history = self.trading_history[-self.max_history:]
@@ -3062,6 +3078,8 @@ No explanation needed."""
             'recent_trades': recent_trades
         }
 
+
+
 # #########################---Below lies the experiment/test-rig---##################
 
 
@@ -3163,6 +3181,8 @@ def populate_market(trdrs_spec, traders, shuffle, vrbs):
             return TraderPT2('PT2', name, proptrader_balance, parameters, time0)
         elif robottype == 'LLM':
             return TraderLLMProp('LLM', name, proptrader_balance, parameters, time0)
+        elif robottype == 'LLM_HM':
+            return TraderLLM_HM('LLM_HM', name, balance, parameters, time0)
         else:
             sys.exit('FATAL: don\'t know trader type %s\n' % robottype)
 
@@ -3229,6 +3249,13 @@ def populate_market(trdrs_spec, traders, shuffle, vrbs):
         if ttype == 'PT1':
             parameters = trader_params
         if ttype == 'PT2':
+            parameters = trader_params
+        
+        # for LLM/LLM_HM the parameters are optional...
+        # ...and are unpacked in __init__, so here they're just passed straight on through
+        if ttype == 'LLM':
+            parameters = trader_params
+        if ttype == 'LLM_HM':
             parameters = trader_params
 
         return parameters
@@ -3730,8 +3757,13 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
         time_left = (endtime - time) / session_duration
         
         current_timestep += 1
-        if current_timestep % 100 == 0:  # Every 1k timesteps
-            print(f"Progress: {current_timestep:,}/{total_timesteps:,} ({current_timestep/total_timesteps*100:.1f}%)")
+        if current_timestep % 1000 == 0:  # Every 1k timesteps
+            progress_msg = f"Progress: {current_timestep:,}/{total_timesteps:,} ({current_timestep/total_timesteps*100:.1f}%)"
+            print(progress_msg)
+            # Log to BSE logger
+            import logging
+            bse_logger = logging.getLogger('BSE')
+            bse_logger.info(progress_msg, extra={'timestep': current_timestep, 'total': total_timesteps, 'progress': current_timestep/total_timesteps*100})
 
         [pending_cust_orders, kills] = customer_orders(time, traders, trader_stats,
                                                        order_schedule, pending_cust_orders, orders_verbose)
@@ -3869,6 +3901,37 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 
 if __name__ == "__main__":
 
+    # Initialize logging system at the start of the simulation
+    from logging_config import setup_logging
+    
+    # Enable debug mode for verbose logging during simulation
+    debug_mode = True
+    verbose_logs = True
+    
+    # Setup logging with session timestamp
+    session_id = setup_logging(log_dir="logs", verbose=verbose_logs, debug_mode=debug_mode)
+    
+    # Redirect stdout and stderr to general output file
+    import os
+    os.makedirs("logs", exist_ok=True)
+    
+    # Use general_output.txt for all console output (append mode)
+    general_log = open("logs/general_output.txt", "a")
+    
+    # Save original stdout/stderr for final messages
+    original_stdout = sys.stdout
+    original_stderr = sys.stderr
+    
+    # Redirect stdout and stderr to general_output.txt
+    sys.stdout = general_log
+    sys.stderr = general_log
+    
+    # Log simulation start to console (original stdout)
+    original_stdout.write("Starting BSE simulation session\n")
+    original_stdout.flush()
+    
+    print("Starting BSE simulation session")
+    
     price_offset_filename = 'offset_BTC_USD_20250211.csv'
 
     # if called from the command line with one argument, the first argument is the price offset filename
@@ -4062,16 +4125,22 @@ if __name__ == "__main__":
         trial_id = 'bse_d%03d_i%02d_%04d' % (n_days, order_interval, trial)
 
         # buyer_spec specifies the strategies played by buyers, and for each strategy how many such buyers to create
-        buyers_spec = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]
+        # Include debug_mode for LLM traders to enable detailed logging
+        buyers_spec = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 10), 
+                       ('LLM', 1, {'debug_mode': debug_mode}), 
+                       ('LLM_HM', 1, {'debug_mode': debug_mode, 'self_improve': True})]
         #     ('PRZI', 5, {'s_min': -1.0, 's_max': +1.0})]
 
         # seller_spec specifies the strategies played by sellers, and for each strategy how many such sellers to create
-        sellers_spec = buyers_spec
+        sellers_spec = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 10), 
+                        ('LLM', 1, {'debug_mode': debug_mode}), 
+                        ('LLM_HM', 1, {'debug_mode': debug_mode, 'self_improve': True})]
 
         # proptraders_spec specifies strategies played by proprietary-traders, and how many of each
-        proptraders_spec = [('PT1', 1, {'bid_percent': 0.95, 'ask_delta': 2, 'n_past_trades': 5}), 
-                           ('PT2', 1, {'bid_percent': 0.99, 'ask_delta': 2, 'n_past_trades': 5}),
-                           ('LLM', 1)]
+        proptraders_spec = [('PT1', 1, {'bid_percent': 0.95, 'ask_delta': 7}), 
+                           ('PT2', 1, {'n_past_trades': 25}),
+                           ('LLM', 1, {'debug_mode': debug_mode}),
+                           ('LLM_HM', 1, {'debug_mode': debug_mode, 'self_improve': True})]
 
         # trader_spec wraps up the specifications for the buyers, sellers, and proptraders
         traders_spec = {'sellers': sellers_spec, 'buyers': buyers_spec, 'proptraders': proptraders_spec}
@@ -4089,6 +4158,34 @@ if __name__ == "__main__":
         market_session(trial_id, start_time, end_time, traders_spec, order_sched, dump_flags, verbose)
 
         trial = trial + 1
+    
+    # Log simulation completion
+    completion_msg = f"\nBSE simulation complete - {n_trials} trials executed"
+    log_msg = f"Log files saved in: logs/"
+    status_msg = "\nSimulation complete! Check logs/ directory for detailed logs."
+    
+    print(completion_msg)
+    print(log_msg)
+    print(status_msg)
+    
+    # Restore original stdout/stderr and close log files
+    sys.stdout.flush()
+    sys.stderr.flush()
+    sys.stdout = original_stdout
+    sys.stderr = original_stderr
+    general_log.close()
+    
+    # Output final messages to console
+    print(completion_msg)
+    print(log_msg)
+    print(status_msg)
+    
+    # Log to BSE logger
+    import logging
+    bse_logger = logging.getLogger('BSE')
+    bse_logger.info(f"BSE simulation complete - {n_trials} trials executed", extra={'n_trials': n_trials})
+    bse_logger.info("Log files saved in: logs/")
+    bse_logger.info("Simulation complete! Check logs/ directory for detailed logs.")
 
     # The code in comments below here is for illustration, in case you want to do an exhaustive sweep of all possible
     # combinations of some set of trading strategies: if its of no interest, it can be deleted.

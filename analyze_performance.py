@@ -16,6 +16,7 @@ STARTING_BALANCES = {
     'ZIC': 0,     # Zero Intelligence Constrained start with $0
     'ZIP': 0,     # Zero Intelligence Plus start with $0
     'LLM': 0,     # LLM traders start with $0
+    'LLM_HM': 0,  # LLM with Hypothetical-Minds approach start with $0
     'LLM_BG': 0,  # LLM with Belief Graph start with $0
     'PT1': 500,   # Proprietary traders start with $500
     'PT2': 500,   # Proprietary traders start with $500
