@@ -1,4 +1,4 @@
-Logging system initialized - Session: 20250823_003418
+Logging system initialized - Session: 20250823_143300
 Log directory: /Users/tianqinmeng/Desktop/BeliefGraphBSE/logs
 Debug mode: True, Verbose: True
 Starting BSE simulation session
@@ -872,12 +872,51 @@ PT1 init: n_past_trades=5, bid_percent=0.95000, ask_delta=7
 
 PT2 init: n_past_trades=25, bid_percent=0.99990, ask_delta=5
 
-SUCCESS: Extracted my quote: {'my_next_quote_price': 176, 'reasoning': '**Analysis:**\n\nThe current market state presents a wide spread between the Best Bid (176) and Best Ask (209), indicating low liquidity and potentially volatile conditions. My current balance is 0.0, a'}
 Traceback (most recent call last):
   File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/BSE.py", line 4157, in <module>
     market_session(trial_id, start_time, end_time, traders_spec, order_sched, dump_flags, verbose)
-  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/BSE.py", line 3800, in market_session
-    traders[trade['party2']].bookkeep(time, trade, order, bookkeep_verbose)
-  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/BSE.py", line 605, in bookkeep
-    if self.orders[0].otype == 'Bid':
-IndexError: list index out of range
+  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/BSE.py", line 3820, in market_session
+    record_frame = traders[t].respond(time, lob, trade, respond_verbose)
+  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/BSE.py", line 2883, in respond
+    decision = self._get_llm_trading_decision(market_context)
+  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/BSE.py", line 2789, in _get_llm_trading_decision
+    response = self.model.generate_content(
+  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/venv/lib/python3.9/site-packages/google/generativeai/generative_models.py", line 331, in generate_content
+    response = self._client.generate_content(
+  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/venv/lib/python3.9/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/client.py", line 835, in generate_content
+    response = rpc(
+  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/venv/lib/python3.9/site-packages/google/api_core/gapic_v1/method.py", line 131, in __call__
+    return wrapped_func(*args, **kwargs)
+  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/venv/lib/python3.9/site-packages/google/api_core/retry/retry_unary.py", line 294, in retry_wrapped_func
+    return retry_target(
+  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/venv/lib/python3.9/site-packages/google/api_core/retry/retry_unary.py", line 147, in retry_target
+    result = target()
+  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/venv/lib/python3.9/site-packages/google/api_core/timeout.py", line 130, in func_with_timeout
+    return func(*args, **kwargs)
+  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/venv/lib/python3.9/site-packages/google/api_core/grpc_helpers.py", line 76, in error_remapped_callable
+    return callable_(*args, **kwargs)
+  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/venv/lib/python3.9/site-packages/grpc/_interceptor.py", line 277, in __call__
+    response, ignored_call = self._with_call(
+  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/venv/lib/python3.9/site-packages/grpc/_interceptor.py", line 329, in _with_call
+    call = self._interceptor.intercept_unary_unary(
+  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/venv/lib/python3.9/site-packages/google/ai/generativelanguage_v1beta/services/generative_service/transports/grpc.py", line 79, in intercept_unary_unary
+    response = continuation(client_call_details, request)
+  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/venv/lib/python3.9/site-packages/grpc/_interceptor.py", line 315, in continuation
+    response, call = self._thunk(new_method).with_call(
+  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/venv/lib/python3.9/site-packages/grpc/_channel.py", line 1189, in with_call
+    state, call = self._blocking(
+  File "/Users/tianqinmeng/Desktop/BeliefGraphBSE/venv/lib/python3.9/site-packages/grpc/_channel.py", line 1162, in _blocking
+    event = call.next_event()
+  File "src/python/grpcio/grpc/_cython/_cygrpc/channel.pyx.pxi", line 388, in grpc._cython.cygrpc.SegregatedCall.next_event
+  File "src/python/grpcio/grpc/_cython/_cygrpc/channel.pyx.pxi", line 211, in grpc._cython.cygrpc._next_call_event
+  File "src/python/grpcio/grpc/_cython/_cygrpc/channel.pyx.pxi", line 205, in grpc._cython.cygrpc._next_call_event
+  File "src/python/grpcio/grpc/_cython/_cygrpc/completion_queue.pyx.pxi", line 97, in grpc._cython.cygrpc._latent_event
+  File "src/python/grpcio/grpc/_cython/_cygrpc/completion_queue.pyx.pxi", line 81, in grpc._cython.cygrpc._internal_latent_event
+  File "src/python/grpcio/grpc/_cython/_cygrpc/completion_queue.pyx.pxi", line 77, in grpc._cython.cygrpc._interpret_event
+  File "src/python/grpcio/grpc/_cython/_cygrpc/tag.pyx.pxi", line 71, in grpc._cython.cygrpc._BatchOperationTag.event
+  File "src/python/grpcio/grpc/_cython/_cygrpc/operation.pyx.pxi", line 138, in grpc._cython.cygrpc.ReceiveInitialMetadataOperation.un_c
+  File "src/python/grpcio/grpc/_cython/_cygrpc/metadata.pyx.pxi", line 69, in grpc._cython.cygrpc._metadata
+  File "src/python/grpcio/grpc/_cython/_cygrpc/metadata.pyx.pxi", line 70, in genexpr
+  File "src/python/grpcio/grpc/_cython/_cygrpc/metadata.pyx.pxi", line 64, in grpc._cython.cygrpc._metadatum
+  File "<string>", line 1, in <lambda>
+KeyboardInterrupt

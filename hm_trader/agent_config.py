@@ -34,14 +34,14 @@ bse_agent_config = {
 MODEL_PARAMS = {
     'gemini-2.5-flash-lite': {
         'temperature': 0.7,
-        'max_tokens': 1000,
+        'max_tokens': 32000,  # Increased for full reasoning text
     },
     'gpt-4': {
         'temperature': 0.7,
-        'max_tokens': 1000,
+        'max_tokens': 32000,  # Increased for full reasoning text
     },
     'gpt-3.5-turbo': {
         'temperature': 0.7,
-        'max_tokens': 1000,
+        'max_tokens': 32000,  # Increased for full reasoning text
     }
 }

@@ -9,7 +9,7 @@ import os
 import asyncio
 import re
 from typing import List, Dict, Any, Optional
-from hm_trader.simple_extractor import extract_price_prediction, extract_strategy, extract_my_quote
+# Unified extraction - use only JSON parsing, no regex fallbacks
 
 
 class GeminiController:
@@ -30,7 +30,7 @@ class GeminiController:
         self.model = model
         self.model_id = model_id
         self.temperature = kwargs.get('temperature', 0.7)
-        self.max_tokens = kwargs.get('max_tokens', 4000)
+        self.max_tokens = kwargs.get('max_tokens', 32000)  # Increased for full reasoning text
     
     async def async_batch_prompt(self, expertise: str, messages: List[str], temperature: float = None) -> List[Dict[str, Any]]:
         """
@@ -58,35 +58,9 @@ class GeminiController:
             if not response or not response.text:
                 raise RuntimeError("Empty response from API")
             
-            # Extract fields based on what we're looking for
-            # NO FALLBACKS - extraction fails = error
-            msg_lower = user_msg.lower()
-            
-            # More specific message type detection
-            if "strategy" in msg_lower and "competitors" in msg_lower:
-                # MESSAGE2: Strategy hypothesis generation
-                extracted = extract_strategy(response.text)
-                print(f"SUCCESS: Extracted strategy hypothesis: {extracted}")
-            elif "predict" in msg_lower and ("price" in msg_lower or "quote" in msg_lower):
-                # MESSAGE3: Price prediction
-                extracted = extract_price_prediction(response.text)
-                print(f"SUCCESS: Extracted price prediction: {extracted}")
-            elif ("my_next_quote_price" in user_msg or "trading decision" in msg_lower or 
-                  "what should your initial quote price" in msg_lower or "decision" in msg_lower or
-                  "what should you quote" in msg_lower):
-                # MESSAGE4: My quote decision
-                extracted = extract_my_quote(response.text)
-                print(f"SUCCESS: Extracted my quote: {extracted}")
-            elif "strategy" in msg_lower:
-                # Generic strategy extraction
-                extracted = extract_strategy(response.text)
-                print(f"SUCCESS: Extracted generic strategy: {extracted}")
-            else:
-                # Just return raw response
-                extracted = {"response": response.text}
-                print(f"INFO: Using raw response for message type: {msg_lower[:50]}")
-            
-            responses.append(extracted)
+            # Return raw response - let BSE agent's extract_dict handle parsing
+            # This removes the confusing dual extraction system
+            responses.append(response.text)
         
         return responses
     
@@ -110,7 +84,7 @@ class LLMInterface:
         self.trader_id = trader_id
         self.model_name = 'gemini-2.5-flash-lite'
         self.temperature = 0.7
-        self.max_tokens = 4000
+        self.max_tokens = 32000  # Increased for full reasoning text
         
         # Get API key
         self.api_key = api_key or os.getenv('GOOGLE_API_KEY')
