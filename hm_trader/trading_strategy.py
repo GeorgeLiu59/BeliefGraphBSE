@@ -142,28 +142,16 @@ class TradingStrategy:
 Current market state: {market_data}
 Your trading context: {trader_context}
 
-This is your initial trading decision. Analyze the market conditions and provide your trading strategy.
+DECISION: What should your initial quote price be?
+ANSWER: "I should quote [PRICE] because [REASONING]."
 
-ABSOLUTELY CRITICAL - SYSTEM WILL CRASH IF NOT FOLLOWED:
-- You MUST respond with ONLY the JSON format below
-- NO explanations, NO additional text, NO markdown formatting
-- ONLY the JSON block with ```json markers
-- Any other text will cause immediate system failure
-
-```json
-{{
-  "my_quote_price": 125,
-  "reasoning": "Initial market analysis and strategy",
-  "aggressiveness": "moderate"
-}}
-```
+Keep response short and direct.
 """
         
         try:
             response = await llm_interface.get_response(system_message, strategy_msg)
-            strategy_data = llm_interface.extract_json_dict(response)
-            
-            return strategy_data
+            # Response is already extracted by the LLM controller
+            return response
             
         except Exception as e:
             raise RuntimeError(f"Initial strategy generation failed for {self.trader_id}: {e}")
@@ -190,32 +178,16 @@ Given opponent strategy: {opponent_strategy}
 Predicted opponent next action: {predicted_next}
 Recent interaction history: {self.trading_history[-3:] if self.trading_history else []}
 
-What should your next trading strategy be to maximize profit?
-Consider:
-1. Market trends and price movements
-2. Long-term strategic positioning
-3. Risk management
+DECISION: What should your next quote price be?
+ANSWER: "I should quote [PRICE] because [REASONING]."
 
-ABSOLUTELY CRITICAL - SYSTEM WILL CRASH IF NOT FOLLOWED:
-- You MUST respond with ONLY the JSON format below
-- NO explanations, NO additional text, NO markdown formatting
-- ONLY the JSON block with ```json markers
-- Any other text will cause immediate system failure
-
-```json
-{{
-  "my_quote_price": 130,
-  "reasoning": "Strategic reasoning for this price",
-  "aggressiveness": "moderate"
-}}
-```
+Keep response short and direct.
 """
         
         try:
             response = await llm_interface.get_response(system_message, strategy_msg)
-            strategy_data = llm_interface.extract_json_dict(response)
-            
-            return strategy_data
+            # Response is already extracted by the LLM controller
+            return response
             
         except Exception as e:
             raise RuntimeError(f"Strategy response generation failed for {self.trader_id}: {e}")

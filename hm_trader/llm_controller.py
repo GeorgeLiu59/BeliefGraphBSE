@@ -9,6 +9,7 @@ import os
 import asyncio
 import re
 from typing import List, Dict, Any, Optional
+from hm_trader.simple_extractor import extract_price_prediction, extract_strategy, extract_my_quote
 
 
 class GeminiController:
@@ -29,22 +30,11 @@ class GeminiController:
         self.model = model
         self.model_id = model_id
         self.temperature = kwargs.get('temperature', 0.7)
-        self.max_tokens = kwargs.get('max_tokens', 1000)
+        self.max_tokens = kwargs.get('max_tokens', 4000)
     
-    async def async_batch_prompt(self, expertise: str, messages: List[str], temperature: float = None) -> List[str]:
+    async def async_batch_prompt(self, expertise: str, messages: List[str], temperature: float = None) -> List[Dict[str, Any]]:
         """
-        EXACT MIRROR: HM's async_batch_prompt interface
-        
-        Args:
-            expertise: System message/expertise (equivalent to system_message in our context)
-            messages: List of user messages to process  
-            temperature: Optional temperature override
-            
-        Returns:
-            List of response strings (not wrapped in lists like original HM)
-            
-        Raises:
-            RuntimeError: If API call fails
+        Simple extraction approach - NO schema, NO fallbacks
         """
         if temperature is None:
             temperature = self.temperature
@@ -52,26 +42,55 @@ class GeminiController:
         responses = []
         
         for user_msg in messages:
-            try:
-                # Combine expertise and user messages for Gemini
-                full_prompt = f"{expertise}\n\n{user_msg}"
-                
-                # Import here to avoid circular imports
-                import google.generativeai as genai
-                
-                response = self.model.generate_content(
-                    full_prompt,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=temperature,
-                        max_output_tokens=self.max_tokens
-                    )
+            # Get raw text response from LLM
+            import google.generativeai as genai
+            
+            full_prompt = f"{expertise}\n\n{user_msg}"
+            
+            response = self.model.generate_content(
+                full_prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=temperature,
+                    max_output_tokens=self.max_tokens
                 )
-                responses.append(response.text)
-                
-            except Exception as e:
-                raise RuntimeError(f"Gemini API call failed: {e}")
+            )
+            
+            if not response or not response.text:
+                raise RuntimeError("Empty response from API")
+            
+            # Extract fields based on what we're looking for
+            # NO FALLBACKS - extraction fails = error
+            msg_lower = user_msg.lower()
+            
+            # More specific message type detection
+            if "strategy" in msg_lower and "competitors" in msg_lower:
+                # MESSAGE2: Strategy hypothesis generation
+                extracted = extract_strategy(response.text)
+                print(f"SUCCESS: Extracted strategy hypothesis: {extracted}")
+            elif "predict" in msg_lower and ("price" in msg_lower or "quote" in msg_lower):
+                # MESSAGE3: Price prediction
+                extracted = extract_price_prediction(response.text)
+                print(f"SUCCESS: Extracted price prediction: {extracted}")
+            elif ("my_next_quote_price" in user_msg or "trading decision" in msg_lower or 
+                  "what should your initial quote price" in msg_lower or "decision" in msg_lower or
+                  "what should you quote" in msg_lower):
+                # MESSAGE4: My quote decision
+                extracted = extract_my_quote(response.text)
+                print(f"SUCCESS: Extracted my quote: {extracted}")
+            elif "strategy" in msg_lower:
+                # Generic strategy extraction
+                extracted = extract_strategy(response.text)
+                print(f"SUCCESS: Extracted generic strategy: {extracted}")
+            else:
+                # Just return raw response
+                extracted = {"response": response.text}
+                print(f"INFO: Using raw response for message type: {msg_lower[:50]}")
+            
+            responses.append(extracted)
         
         return responses
+    
+
 
 
 class LLMInterface:
@@ -91,7 +110,7 @@ class LLMInterface:
         self.trader_id = trader_id
         self.model_name = 'gemini-2.5-flash-lite'
         self.temperature = 0.7
-        self.max_tokens = 1000
+        self.max_tokens = 4000
         
         # Get API key
         self.api_key = api_key or os.getenv('GOOGLE_API_KEY')
@@ -104,7 +123,13 @@ class LLMInterface:
             self._initialize_controller()
     
     def _initialize_controller(self):
-        """Initialize Gemini controller"""
+        """
+        (2) ENV SETUP: Initialize LLM connection and structured output capabilities
+        
+        INTUITION: This is where the agent gets its "brain" connected. We set up the
+        communication channel to the LLM (Gemini) and configure it for structured
+        reasoning. The agent can now think, reason, and make hypothesis-driven decisions.
+        """
         try:
             import google.generativeai as genai
             genai.configure(api_key=self.api_key)
@@ -131,16 +156,16 @@ class LLMInterface:
         """Check if LLM controller is available"""
         return self.controller is not None
     
-    async def get_response(self, system_message: str, user_message: str) -> str:
+    async def get_response(self, system_message: str, user_message: str) -> Dict[str, Any]:
         """
-        Get single response from LLM
+        Get single structured response from LLM
         
         Args:
             system_message: System prompt
             user_message: User message
             
         Returns:
-            Response text
+            Structured response dictionary
             
         Raises:
             RuntimeError: If controller unavailable or API call fails
@@ -150,136 +175,27 @@ class LLMInterface:
         
         try:
             responses = await self.controller.async_batch_prompt(system_message, [user_message])
-            return responses[0][0] if responses and len(responses) > 0 and len(responses[0]) > 0 else ""
+            return responses[0] if responses and len(responses) > 0 else {"response": "", "confidence": 0.0}
         
         except Exception as e:
             raise RuntimeError(f"LLM decision call failed for {self.trader_id}: {e}")
     
-    def extract_json_dict(self, response: str) -> Dict[str, Any]:
+    async def async_batch_prompt(self, system_message: str, messages: List[str], temperature: float = None) -> List[Dict[str, Any]]:
         """
-        Extract dictionary from LLM response using HM parsing logic
+        Delegate to controller's async_batch_prompt method for HM compatibility
         
         Args:
-            response: Raw LLM response text
+            system_message: System message/expertise
+            messages: List of user messages
+            temperature: Optional temperature override
             
         Returns:
-            Parsed dictionary
-            
-        Raises:
-            ValueError: If parsing fails
+            List of structured response dictionaries
         """
-        try:
-            # Find JSON markers
-            start_marker = "```json\n"
-            end_marker = "\n```"         
-            start_pos = response.find(start_marker)
+        if not self.is_available():
+            raise RuntimeError(f"LLM controller not available for {self.trader_id}")
             
-            if start_pos == -1:
-                # Try alternative JSON markers
-                start_marker = "```json"
-                start_pos = response.find(start_marker)
-                
-                if start_pos != -1:
-                    start_index = start_pos + len(start_marker)
-                    # Find the JSON content
-                    brace_start = response.find('{', start_index)
-                    if brace_start != -1:
-                        brace_count = 0
-                        end_index = brace_start
-                        for i, char in enumerate(response[brace_start:], brace_start):
-                            if char == '{':
-                                brace_count += 1
-                            elif char == '}':
-                                brace_count -= 1
-                                if brace_count == 0:
-                                    end_index = i + 1
-                                    break
-                        dict_str = response[brace_start:end_index].strip()
-                    else:
-                        raise ValueError("No JSON object found after ```json marker")
-                else:
-                    # Try to find raw JSON in response
-                    brace_start = response.find('{')
-                    if brace_start != -1:
-                        brace_count = 0
-                        end_index = brace_start
-                        for i, char in enumerate(response[brace_start:], brace_start):
-                            if char == '{':
-                                brace_count += 1
-                            elif char == '}':
-                                brace_count -= 1
-                                if brace_count == 0:
-                                    end_index = i + 1
-                                    break
-                        dict_str = response[brace_start:end_index].strip()
-                    else:
-                        # Fallback for price extraction
-                        if "predicted_opponent_next_price" in response or "my_quote_price" in response:
-                            numbers = re.findall(r'\b\d{1,3}\b', response)  # Find 1-3 digit numbers
-                            if numbers:
-                                price = int(numbers[0])
-                                if "predicted_opponent_next_price" in response:
-                                    return {"predicted_opponent_next_price": price, "confidence": 0.5}
-                                elif "my_quote_price" in response:
-                                    return {"my_quote_price": price, "reasoning": "Extracted from non-JSON response", "aggressiveness": "moderate"}
-                        raise ValueError("JSON dictionary markers not found in LLM response")
-            else:
-                start_index = start_pos + len(start_marker)
-                end_index = response.find(end_marker, start_index)
-                if end_index == -1:
-                    end_index = response.find("```", start_index)
-                    if end_index == -1:
-                        raise ValueError("JSON dictionary end markers not found in LLM response")
-                dict_str = response[start_index: end_index].strip()
-
-            # Process each line, skipping comments
-            lines = dict_str.split('\n')
-            cleaned_lines = []
-            for line in lines:
-                comment_index = line.find('#')
-                if comment_index != -1:
-                    line = line[:comment_index].strip()
-                if line:
-                    cleaned_lines.append(line)
-
-            # Reassemble the cleaned string
-            cleaned_dict_str = ' '.join(cleaned_lines)
-         
-            # Convert the JSON string into a dictionary
-            import json
-            extracted_dict = json.loads(cleaned_dict_str)
-            return extracted_dict
-            
-        except Exception as e:
-            raise ValueError(f"LLM response parsing failed for {self.trader_id}: {e}. Raw response: {response[:500]}")
-    
-    def extract_price_from_response(self, response_text: str) -> tuple[Optional[int], str]:
-        """
-        Extract trading price from LLM response (fallback method)
-        
-        Args:
-            response_text: Raw LLM response
-            
-        Returns:
-            Tuple of (price, reasoning)
-        """
-        price = None
-        reasoning = response_text
-        
-        # Try to find a number in the response
-        numbers = re.findall(r'\d+', response_text)
-        if numbers:
-            try:
-                price = int(numbers[0])  # Take the first number found
-                reasoning = f"Found price {price} in response: {response_text}"
-            except ValueError:
-                raise ValueError(f"Could not parse price from response for {self.trader_id}: {response_text}")
-        else:
-            # Use a reasonable default price for empty markets
-            price = 150  # Mid-range default
-            reasoning = f"LLM couldn't decide possibly due to empty market, using default price {price}. LLM response: {response_text}"
-        
-        return price, reasoning
+        return await self.controller.async_batch_prompt(system_message, messages, temperature)
 
 
 def create_system_message(trader_id: str) -> str:
@@ -295,11 +211,13 @@ def create_system_message(trader_id: str) -> str:
     return f"""
 You are Trader {trader_id} in the Bristol Stock Exchange (BSE) simulation.
 
-CRITICAL JSON FORMAT REQUIREMENT:
-- You MUST ALWAYS respond in strict JSON format with ```json markers
-- NO explanations, NO additional text outside the JSON block
-- System will crash if you deviate from JSON format
-- Always use the exact JSON structure requested
+RESPONSE FORMAT:
+- Follow the EXACT format requested in each prompt
+- If asked for a DECISION, provide the ANSWER in the specified format
+- If asked for a PREDICT, provide the ANSWER in the specified format  
+- If asked for a STRATEGY, provide the ANSWER in the specified format
+- Keep responses short and direct
+- Do NOT provide market analysis unless specifically requested
 
 TRADING ENVIRONMENT:
 - You are participating in a limit order book (LOB) financial exchange
@@ -333,5 +251,5 @@ DECISION MAKING:
 - Adapt strategy based on hypothesis evaluation
 - Use feedback to improve future decisions
 
-REMEMBER: ALWAYS respond in JSON format only. No explanations outside JSON.
+IMPORTANT: Follow the prompt format exactly. Do not add explanations or analysis unless specifically asked.
 """

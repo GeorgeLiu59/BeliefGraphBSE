@@ -2843,13 +2843,12 @@ No explanation needed."""
 
     def _fallback_decision(self):
         """
-        Simple fallback decision if LLM is unavailable
+        CRITICAL ERROR: LLM fallback during development phase
         """
-        return {
-            'action': 'WAIT',
-            'price': None,
-            'reasoning': 'LLM unavailable, using fallback wait strategy'
-        }
+        raise RuntimeError(f"CRITICAL DEVELOPMENT ERROR: LLM fallback triggered for trader {self.tid}. "
+                          f"This indicates the LLM system is not properly configured or has failed. "
+                          f"During development phase, we want to see these failures explicitly rather than "
+                          f"hiding them with fallbacks. FIX THE LLM INTEGRATION IMMEDIATELY!")
 
     def getorder(self, time, countdown, lob):
         """

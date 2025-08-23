@@ -16,6 +16,7 @@ Core HM Logic Preserved:
 import re
 import abc
 import asyncio
+import logging
 import numpy as np
 from copy import deepcopy
 from queue import Queue
@@ -23,6 +24,79 @@ from typing import List, Dict, Any, Tuple, Optional
 
 # Import BSE-specific dependencies
 from BSE import Trader, Order
+
+
+class HMFlowLogger:
+    """
+    ULTRA-VERBOSE logging for every stage of the Hypothetical-Minds agent flow.
+    Routes all logs to a single HM-specific file for forensic-level debugging.
+    PHILOSOPHY: Log EVERYTHING - no detail is too small during development.
+    """
+    
+    def __init__(self, trader_id: str):
+        self.trader_id = trader_id
+        self.logger = logging.getLogger('BSE.LLM_HM')
+        self.session_counter = 0
+        self.stage_counters = {}
+        
+    def log_stage(self, stage_id: str, stage_name: str, details: str = "", data: Any = None, extra_context: Dict[str, Any] = None):
+        """
+        Log a specific stage with MAXIMUM verbosity
+        """
+        # Count stage occurrences
+        stage_key = f"{stage_id}_{stage_name}"
+        self.stage_counters[stage_key] = self.stage_counters.get(stage_key, 0) + 1
+        count = self.stage_counters[stage_key]
+        
+        # Full data logging (no truncation)
+        data_str = ""
+        if data is not None:
+            data_str = f" | FULL_DATA: {data}"
+        
+        # Extra context
+        context_str = ""
+        if extra_context:
+            context_str = f" | CONTEXT: {extra_context}"
+            
+        self.logger.info(f"[{self.trader_id}] STAGE_{count} ({stage_id}) {stage_name} | {details}{data_str}{context_str}")
+    
+    def log_decision(self, decision_type: str, decision: Any, reasoning: str = "", confidence: float = None, alternatives: List[Any] = None):
+        """Log decisions with full context and alternatives considered"""
+        conf_str = f" | CONFIDENCE: {confidence}" if confidence is not None else ""
+        alt_str = f" | ALTERNATIVES: {alternatives}" if alternatives else ""
+        self.logger.info(f"[{self.trader_id}] DECISION {decision_type} | CHOSEN: {decision} | REASONING: {reasoning}{conf_str}{alt_str}")
+        
+    def log_learning(self, learning_type: str, before_state: Any, after_state: Any, prediction_accuracy: float = None):
+        """Log learning with prediction accuracy"""
+        acc_str = f" | ACCURACY: {prediction_accuracy:.3f}" if prediction_accuracy is not None else ""
+        self.logger.info(f"[{self.trader_id}] LEARNING {learning_type} | BEFORE: {before_state} | AFTER: {after_state}{acc_str}")
+        
+    def log_error(self, stage: str, error: str, context: str = "", stack_trace: str = ""):
+        """Log errors with full stack trace"""
+        stack_str = f" | STACK: {stack_trace}" if stack_trace else ""
+        self.logger.error(f"[{self.trader_id}] ERROR in {stage} | {error} | CONTEXT: {context}{stack_str}")
+        
+    def log_llm_interaction(self, message_type: str, prompt: str, response: str, tokens_used: int = None, latency_ms: float = None):
+        """Log COMPLETE LLM interactions with performance metrics"""
+        perf_str = ""
+        if tokens_used or latency_ms:
+            perf_str = f" | TOKENS: {tokens_used} | LATENCY: {latency_ms:.2f}ms"
+        
+        self.logger.info(f"[{self.trader_id}] LLM_{message_type} | FULL_PROMPT: {prompt} | FULL_RESPONSE: {response}{perf_str}")
+        
+    def log_market_state(self, time: float, lob: Dict[str, Any], balance: float, orders: List[Any]):
+        """Log complete market state for decision context"""
+        self.logger.info(f"[{self.trader_id}] MARKET_STATE | TIME: {time} | BALANCE: {balance} | ORDERS: {orders} | LOB: {lob}")
+        
+    def log_hypothesis_details(self, hypotheses: Dict[str, Any], good_found: bool, best_key: str = None):
+        """Log detailed hypothesis state"""
+        self.logger.info(f"[{self.trader_id}] HYPOTHESIS_STATE | COUNT: {len(hypotheses)} | GOOD_FOUND: {good_found} | BEST: {best_key} | ALL: {hypotheses}")
+        
+    def log_interaction_analysis(self, interaction_num: int, history: List[Dict], predictions: Dict[str, Any], actual_outcome: Dict[str, Any]):
+        """Log complete interaction analysis"""
+        self.logger.info(f"[{self.trader_id}] INTERACTION_{interaction_num} | HISTORY: {history} | PREDICTIONS: {predictions} | ACTUAL: {actual_outcome}")
+
+
 
 
 class DecentralizedAgent(Trader, abc.ABC):
@@ -47,8 +121,19 @@ class DecentralizedAgent(Trader, abc.ABC):
             controller: Any,
             ) -> None:
         
+        # (3) AGENT CREATE: Initialize authentic HM DecentralizedAgent for BSE trading
+        # 
+        # INTUITION: This is the core HM agent coming to life. We inherit from BSE's Trader
+        # but add HM's sophisticated reasoning: opponent modeling, hypothesis generation,
+        # Rescorla-Wagner learning, and strategic decision-making. The agent is now ready
+        # to observe, hypothesize, predict, and adapt in the trading environment.
+        
         # Initialize BSE Trader base class
         Trader.__init__(self, ttype, tid, balance, params, time)
+        
+        # Initialize HM Flow Logger
+        self.hm_logger = HMFlowLogger(tid)
+        self.hm_logger.log_stage("3", "AGENT_CREATE", f"Initializing DecentralizedAgent with config: {config}")
         
         # EXACT HM PATTERN: Core agent configuration
         self.agent_id = config['agent_id'] if 'agent_id' in config else tid
@@ -186,71 +271,34 @@ class DecentralizedAgent(Trader, abc.ABC):
             return "No interaction history available yet."
             
         user_message = f"""
-            A trading interaction has occurred at step {step}, {self.interaction_history[-1]}.
-            Total interaction history: {self.interaction_history}.
-            You last quoted: {self.interaction_history[-1].get('your_quote', 'N/A')}
+            Step {step}: {self.interaction_history[-1]}
+            You quoted: {self.interaction_history[-1].get('your_quote', 'N/A')}
             
-            Based on the trading pattern and market context, predict what the other traders will do next.
+            PREDICT: What price will competing traders quote next?
+            ANSWER: "Competing traders will likely quote around [PRICE] with [CONFIDENCE]% confidence."
             
-            Consider the BSE trading environment where:
-            - Traders submit bid/ask orders with specific prices
-            - Orders are matched when bid >= ask
-            - Traders adapt strategies based on market conditions and competitor behavior
-            - Profit maximization drives all decisions
-            
-            This response should include step-by-step reasoning:
-            1. 'Other_traders_next_action': Given the trading history and market patterns, 
-               what price level are competing traders likely to quote next?
-            2. Output the prediction in Python dictionary format, parsable by ast.literal_eval()
-            
-            Example response:
-            1. 'Other_traders_next_action': Based on competitor patterns, they likely will bid around 145-150 to stay competitive.
-            ```python
-            {{
-              'predicted_other_trader_next_price': 147,
-              'confidence': 0.7,
-              'reasoning': 'Competitors have been consistently bidding within 5 cents of market price'
-            }}
-            ```
+            Keep response short and direct.
             """
         return user_message
 
     def generate_interaction_feedback_user_message2(self, reward_tracker: Any, step: float):
         """
-        EXACT MIRROR: HM's generate_interaction_feedback_user_message2  
-        Adapted for BSE - generates opponent strategy hypothesis
+        (4h) HYPOTHESIS BUILDING: Generate new opponent strategy hypotheses
+        
+        INTUITION: This is where the agent becomes a "market psychologist". Looking at
+        opponent trading patterns, the agent forms theories: "Are they momentum traders?
+        Mean reversion? Market makers?" These hypotheses drive future predictions and
+        strategic decisions. It's the agent building a mental model of opponent minds.
         """
         recent_interactions = self.interaction_history[-3:] if len(self.interaction_history) >= 3 else self.interaction_history
         
         user_message = f"""
-            A trading interaction has occurred at step {step}. Recent interaction history: {recent_interactions}.
-            Current reward/profit status: {reward_tracker if reward_tracker else 'Not available'}.
+            Step {step}: Recent interactions: {recent_interactions}
             
-            What is the likely trading strategy of your competitors given their recent pricing behavior and market conditions?
-            Think step by step about this given the trading history.
+            STRATEGY: What is the competitors' likely trading strategy?
+            ANSWER: "They appear to be using [STRATEGY] strategy with [CONFIDENCE]% confidence."
             
-            They may be using:
-            - Momentum-following strategies (buying when prices rise)  
-            - Mean reversion strategies (buying when prices fall)
-            - Spread-based strategies (maintaining fixed spreads)
-            - Adaptive strategies (responding to your actions)
-            - Market making strategies (providing liquidity)
-            
-            Consider:
-            - Are they consistently pricing aggressively (close to best bid/ask)?
-            - Do they respond to market changes or maintain consistent behavior?
-            - Are they trying to undercut competitors or follow market trends?
-            
-            Format your response as a Python dictionary starting with ```python:
-            
-            Example response:
-            ```python
-            {{
-                'possible_other_player_strategy': 'Competitors are following an aggressive momentum strategy, consistently pricing within 2-3 cents of the best market price to maximize trade execution probability.',
-                'strategy_confidence': 0.8,
-                'key_patterns': ['aggressive_pricing', 'momentum_following', 'quick_adaptation']
-            }}
-            ```
+            Keep response short.
             """
         return user_message
 
@@ -263,31 +311,12 @@ class DecentralizedAgent(Trader, abc.ABC):
             possible_opponent_strategy = self.possible_opponent_strategy or "general market participant"
             
         user_message = f"""
-            An interaction with other traders has occurred at step {step}, {self.interaction_history[-1] if self.interaction_history else {}}.
-            Total interaction history: {self.interaction_history}.
-            You last quoted: {self.interaction_history[-1].get('your_quote') if self.interaction_history else 'N/A'}
-            You previously guessed that their strategy is: {possible_opponent_strategy}.
+            Step {step}: Recent interactions: {self.interaction_history[-3:] if len(self.interaction_history) >= 3 else self.interaction_history}
             
-            Given this strategy and the interaction history, predict what the other traders will quote next.
+            PREDICT: What price will the opponent quote next?
+            ANSWER: "Competing traders will likely quote around [PRICE] with [CONFIDENCE]% confidence."
             
-            Remember the BSE trading dynamics:
-            - Traders balance profit margins vs execution probability
-            - Market conditions influence aggressive vs conservative pricing
-            - Competitors adapt to each other's strategies over time
-            
-            Format response with step-by-step reasoning:
-            1. 'Other_traders_next_price': Given the strategy guess and last interaction,
-               what price are they likely to quote next?
-            2. Output prediction in Python dictionary format
-            
-            Example response:
-            1. 'Other_traders_next_price': Given their momentum strategy, they'll likely bid 148 to stay competitive.
-            ```python
-            {{
-              'predicted_other_trader_next_price': 148,
-              'confidence': 0.75
-            }}
-            ```
+            Keep response short and direct.
             """
         return user_message
 
@@ -300,159 +329,253 @@ class DecentralizedAgent(Trader, abc.ABC):
             possible_opponent_strategy = self.possible_opponent_strategy
             
         user_message = f"""
-            An interaction with other traders has occurred at step {step}, {self.interaction_history[-1] if self.interaction_history else {}}.
-            Total interaction history: {self.interaction_history}.
-            You last quoted: {self.interaction_history[-1].get('your_quote') if self.interaction_history else 'N/A'}
-            You previously guessed their strategy is: {possible_opponent_strategy}.
-            You predicted their next price will be: {self.possible_opponent_price}.
+            Step {step}: Recent interactions: {self.interaction_history[-3:] if len(self.interaction_history) >= 3 else self.interaction_history}
             
-            High-level strategy request:            
-            Given the above information, provide the next trading strategy to maximize long-term profit.
+            DECISION: What should your quote price be?
+            ANSWER: "I should quote [PRICE] because [REASONING]."
             
-            Remember BSE trading principles:
-            - This is a repeated game where reputation and adaptation matter
-            - You want to balance immediate profit vs long-term strategic positioning
-            - Consider how your actions will influence competitor behavior in future rounds
-            
-            Response format with step-by-step reasoning:
-            1. My strategy: What should your long-term trading approach be? 
-               If competitors are adaptive, think about actions that will lead them to quote prices better for you.
-               This is a strategic environment - what pricing strategy will maximize long-term profits?
-            2. My next quote: Given competitors' likely next prices and your strategy, what should you quote?
-            3. Output your next quote in Python dictionary format
-            
-            Example response:
-            1. My strategy: Given competitors use momentum strategies, I should quote slightly more aggressively to capture trades while they adjust.
-            2. My next quote: To maximize profit I should quote 146 to undercut their likely 148 quote.
-            ```python
-            {{
-              'my_next_quote_price': 146,
-              'reasoning': 'Strategic undercutting to capture trades before competitors adapt'
-            }}
-            ```
-            
-            Your goal is to maximize profit over the entire trading session, so consider long-term consequences.
+            Keep response short and direct.
             """
         return user_message
 
-    async def two_level_plan(self, lob: Dict[str, Any], time: float, countdown: float, after_interaction: bool = False):
+    # ============================================================================
+    # DESIGN CHOICE: BSE vs Original HM Architecture
+    # ============================================================================
+    # ORIGINAL HM: two_level_plan() does Learning + Action Planning together
+    # BSE REQUIREMENT: getorder() needs action only, respond() needs learning only
+    # 
+    # SOLUTION: Split the monolithic two_level_plan into two separate methods:
+    # 1. learn_from_interaction() - ONLY learning/hypothesis updates (for respond())
+    # 2. plan_action_with_hypotheses() - ONLY action planning (for getorder())
+    # 
+    # This preserves HM's sophisticated reasoning while adapting to BSE's timing.
+    # ============================================================================
+
+    async def learn_from_interaction(self, lob: Dict[str, Any], time: float) -> None:
         """
-        EXACT MIRROR: HM's two_level_plan - the core decision-making function
+        LEARNING PHASE: Extract and process opponent behavior from last interaction
         
-        This is the heart of the Hypothetical-Minds approach, exactly mirroring the original
-        structure and logic flow from pd_hypothetical_minds.py lines 457-636
+        DESIGN CHOICE: This method contains ONLY the learning parts (lines 461-488) 
+        from original HM two_level_plan(). Called from respond() after trade outcomes.
+        
+        INTUITION: "I just traded with someone. What can I learn about their strategy?
+        How should I update my beliefs about how they behave?"
         """
-        if after_interaction:
-            # EXACT HM PATTERN: After interaction processing
-            hls_user_msg = ''
-            hls_response = ''
+        interaction_context = {
+            'interaction_num': self.interaction_num,
+            'total_history': len(self.interaction_history),
+            'hypotheses_count': len(self.opponent_hypotheses),
+            'good_hypothesis_found': self.good_hypothesis_found
+        }
+        self.hm_logger.log_stage("4g", "LEARNING_START", f"Beginning learning from interaction #{self.interaction_num}", 
+                                extra_context=interaction_context)
+        self.hm_logger.log_market_state(time, lob, self.balance, self.orders)
+        
+        if len(self.interaction_history) == 0:
+            self.hm_logger.log_stage("4g", "LEARNING_SKIP", "No interaction history to learn from yet")
+            return  # Nothing to learn from yet
             
-            # Step 1: Predict opponent next action
-            hls_user_msg1 = self.generate_interaction_feedback_user_message1(time)
-            hls_user_msg = hls_user_msg + '\n\n' + hls_user_msg1
+        # Step 1: Analyze what opponent actually did (Message 1)
+        self.hm_logger.log_stage("4g", "LEARNING_ANALYZE", "Generating Message 1: Analyze opponent behavior", 
+                                data={'last_interaction': self.interaction_history[-1]})
+        
+        import time as time_module
+        start_time = time_module.time()
+        hls_user_msg1 = self.generate_interaction_feedback_user_message1(time) 
+        
+        responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg1])
+        possible_opponent_price = responses[0]  # Already structured dict
+        
+        end_time = time_module.time()
+        latency = (end_time - start_time) * 1000
+        
+        self.hm_logger.log_llm_interaction("Message1", hls_user_msg1, str(possible_opponent_price), latency_ms=latency)
+        
+        # Validate required key
+        if 'predicted_other_trader_next_price' not in possible_opponent_price:
+            self.hm_logger.log_error("4g", "Missing predicted_other_trader_next_price", str(possible_opponent_price))
+            raise ValueError(f"CRITICAL ERROR: LLM failed to provide required 'predicted_other_trader_next_price' field. "
+                           f"Response: {possible_opponent_price}. This indicates schema enforcement is broken or "
+                           f"message content detection failed. FIX IMMEDIATELY - no fallbacks in development phase!")
             
-            # EXACT HM PATTERN: Ensure correct syntax with retry logic
-            correct_syntax = False
-            counter = 0
-            while not correct_syntax and counter < 6:
-                correct_syntax = True
-                responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg1])
-                response = responses[0]                
-                possible_opponent_price = self.extract_dict(response)
-                
-                # EXACT HM PATTERN: Validate key presence
-                key_present = 'predicted_other_trader_next_price' in possible_opponent_price
-                
-                if not key_present:
-                    correct_syntax = False
-                    print(f"Error parsing dictionary when extracting other trader price, retrying...")
-                counter += 1
-                
-            self.possible_opponent_price = possible_opponent_price
-            print(f'Other trader price prediction: {possible_opponent_price}')
+        self.possible_opponent_price = possible_opponent_price
+        self.hm_logger.log_decision("OPPONENT_ANALYSIS", possible_opponent_price.get('predicted_other_trader_next_price'), 
+                                   possible_opponent_price.get('reasoning', 'No reasoning provided'))
+        
+        # Update interaction history with opponent analysis
+        old_history = self.interaction_history[-1].copy()
+        self.interaction_history[-1].update(self.possible_opponent_price)
+        self.hm_logger.log_learning("INTERACTION_UPDATE", old_history, self.interaction_history[-1])
+        
+        # Step 2: Evaluate how good our previous predictions were
+        if self.interaction_num > 1:
+            self.hm_logger.log_stage("4h", "HYPOTHESIS_EVAL", f"Evaluating {len(self.opponent_hypotheses)} hypotheses")
+            old_hypotheses = deepcopy(self.opponent_hypotheses)
+            self.evaluate_opponent_hypotheses()
+            self.hm_logger.log_learning("HYPOTHESIS_UPDATE", 
+                                      f"{len(old_hypotheses)} hypotheses", 
+                                      f"{len(self.opponent_hypotheses)} hypotheses, good_found: {self.good_hypothesis_found}")
+        
+        self.hm_logger.log_stage("4g", "LEARNING_COMPLETE", f"Learning completed for interaction #{self.interaction_num}")
+
+    async def plan_action_with_hypotheses(self, lob: Dict[str, Any], time: float, countdown: float) -> Dict[str, Any]:
+        """
+        ACTION PLANNING PHASE: Use accumulated hypotheses to make strategic decisions
+        
+        DESIGN CHOICE: This method contains the action planning parts (lines 489-564 + initial)
+        from original HM two_level_plan(). Called from getorder() when BSE asks for trades.
+        
+        INTUITION: "Based on everything I've learned about my opponents, what should I do now?
+        If I have no history, use basic strategy. If I have opponent models, use strategic reasoning."
+        """
+        self.hm_logger.log_stage("4c", "STRATEGIC_PLANNING", f"Planning action with {len(self.opponent_hypotheses)} hypotheses, countdown: {countdown}")
+        
+        # Case 1: No trading history - use initial strategy
+        if len(self.interaction_history) == 0:
+            self.hm_logger.log_stage("4c", "INITIAL_STRATEGY", "No interaction history, using initial strategy")
+            hls_user_msg = self.generate_hls_user_message(lob, time, countdown)
+            self.hm_logger.log_llm_interaction("InitialStrategy", "Initial market strategy", hls_user_msg[:100])
             
-            # EXACT HM PATTERN: Add response and update interaction history
-            hls_response = hls_response + '\n\n' + response
-            self.interaction_history[-1].update(self.possible_opponent_price)
+            responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg])
+            my_strategy = responses[0]  # Already structured dict
             
-            # EXACT HM PATTERN: Evaluate hypotheses if we have enough history
-            if self.interaction_num > 1:
-                self.eval_hypotheses()
-                
-            # EXACT HM PATTERN: Generate new hypothesis if no good one found
-            if not self.good_hypothesis_found:
-                hls_user_msg2 = self.generate_interaction_feedback_user_message2(None, time)
-                hls_user_msg = hls_user_msg + '\n\n' + hls_user_msg2
-                responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg2])
-                response = responses[0]                
-                possible_opponent_strategy = self.extract_dict(response)
-                
-                self.possible_opponent_strategy = possible_opponent_strategy
-                print(f'Opponent strategy hypothesis: {possible_opponent_strategy}')
-                hls_response = hls_response + '\n\n' + response
-                
-                # EXACT HM PATTERN: Store new hypothesis
-                self.opponent_hypotheses[self.interaction_num] = deepcopy(possible_opponent_strategy)
-                self.opponent_hypotheses[self.interaction_num]['value'] = 0  # Initialize value
-                
-                # Step 3: Predict opponent next action based on strategy
-                hls_user_msg3 = self.generate_interaction_feedback_user_message3(time, possible_opponent_strategy)
-                hls_user_msg = hls_user_msg + '\n\n' + hls_user_msg3
-                responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg3])
-                response = responses[0]
-                other_player_next_action = self.extract_dict(response)
-                
-                # EXACT HM PATTERN: Store prediction in hypothesis
-                self.opponent_hypotheses[self.interaction_num]['other_player_next_action'] = other_player_next_action
-                hls_response = hls_response + '\n\n' + response
-                
-                # Step 4: Generate my next action
-                hls_user_msg4 = self.generate_interaction_feedback_user_message4(time, possible_opponent_strategy)
-                hls_user_msg = hls_user_msg + '\n\n' + hls_user_msg4
-                responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg4])
-                response = responses[0]
-                my_next_strategy = self.extract_dict(response)
-                
-                return my_next_strategy
-                
-            else:
-                # EXACT HM PATTERN: Use best hypothesis when good one found
-                sorted_keys = sorted([key for key in self.opponent_hypotheses], 
-                                   key=lambda x: self.opponent_hypotheses[x]['value'], reverse=True)
-                best_key = sorted_keys[0]
-                
-                # EXACT HM PATTERN: Assert hypothesis meets threshold
-                assert self.opponent_hypotheses[best_key]['value'] > self.good_hypothesis_thr
-                
-                print(f'Using good hypothesis: {best_key}')
-                
-                # Use best hypothesis for prediction and strategy
-                best_hypothesis = self.opponent_hypotheses[best_key]
-                
-                hls_user_msg3 = self.generate_interaction_feedback_user_message3(time, best_hypothesis)
-                responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg3])
-                response = responses[0]
-                other_player_next_action = self.extract_dict(response)
-                
-                # Update best hypothesis
-                self.opponent_hypotheses[best_key]['other_player_next_action'] = other_player_next_action
-                
-                hls_user_msg4 = self.generate_interaction_feedback_user_message4(time, best_hypothesis)
-                responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg4])
-                response = responses[0]
-                my_next_strategy = self.extract_dict(response)
-                
-                return my_next_strategy
+            self.hm_logger.log_decision("INITIAL_PRICE", my_strategy.get('my_next_quote_price'), 
+                                      my_strategy.get('reasoning', 'No reasoning provided'))
+            return my_strategy
+            
+        # Case 2: Have trading history - use full HM strategic reasoning
+        self.hm_logger.log_stage("4c", "HYPOTHESIS_STRATEGY", f"Using strategic reasoning with {len(self.interaction_history)} past interactions")
+        return await self._strategic_planning_with_hypotheses(lob, time, countdown)
+    
+    async def _strategic_planning_with_hypotheses(self, lob: Dict[str, Any], time: float, countdown: float) -> Dict[str, Any]:
+        """
+        Internal method: Full HM strategic reasoning using accumulated opponent models
+        
+        This implements the sophisticated HM reasoning from lines 489-564 of original two_level_plan
+        
+        Args:
+            lob: Current limit order book (available for future market-aware strategy)
+            time: Current simulation time
+            countdown: Time remaining (available for urgency-based decisions)
+        """
+        strategy_context = {
+            'lob_state': {'best_bid': lob.get('bids', {}).get('best', 'None'), 
+                         'best_ask': lob.get('asks', {}).get('best', 'None')},
+            'time_remaining': countdown,
+            'trader_balance': self.balance,
+            'pending_orders': len(self.orders),
+            'good_hypothesis_found': self.good_hypothesis_found
+        }
+        
+        # Generate new hypothesis if no good one exists
+        if not self.good_hypothesis_found:
+            self.hm_logger.log_stage("4c", "NEW_HYPOTHESIS_PATH", "Generating new opponent hypothesis - no good hypothesis found")
+            
+            # Step 1: Generate opponent strategy hypothesis (Message 2)
+            self.hm_logger.log_stage("4c", "MESSAGE2", "Generating opponent strategy hypothesis", extra_context=strategy_context)
+            
+            import time as time_module
+            start_time = time_module.time()
+            hls_user_msg2 = self.generate_interaction_feedback_user_message2(None, time)
+            
+            responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg2])
+            possible_opponent_strategy = responses[0]  # Already structured dict
+            
+            end_time = time_module.time()
+            latency = (end_time - start_time) * 1000
+            
+            self.hm_logger.log_llm_interaction("Message2", hls_user_msg2, str(possible_opponent_strategy), latency_ms=latency)
+            self.possible_opponent_strategy = possible_opponent_strategy
+            
+            # Store new hypothesis
+            self.opponent_hypotheses[self.interaction_num] = deepcopy(possible_opponent_strategy)
+            self.opponent_hypotheses[self.interaction_num]['value'] = 0  # Initialize value
+            self.hm_logger.log_learning("NEW_HYPOTHESIS", 
+                                      f"Interaction {self.interaction_num}", 
+                                      possible_opponent_strategy.get('possible_other_player_strategy', 'Unknown strategy'))
+            
+            # Step 2: Predict opponent next action based on strategy (Message 3)
+            self.hm_logger.log_stage("4c", "MESSAGE3", "Predicting opponent next action", data={'strategy_basis': possible_opponent_strategy})
+            
+            start_time = time_module.time()
+            hls_user_msg3 = self.generate_interaction_feedback_user_message3(time, possible_opponent_strategy)
+            responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg3])
+            other_player_next_action = responses[0]  # Already structured dict
+            end_time = time_module.time()
+            latency = (end_time - start_time) * 1000
+            
+            self.hm_logger.log_llm_interaction("Message3", hls_user_msg3, str(other_player_next_action), latency_ms=latency)
+            
+            # Store prediction in hypothesis
+            self.opponent_hypotheses[self.interaction_num]['other_player_next_action'] = other_player_next_action
+            
+            # Step 3: Generate my strategic response (Message 4)
+            self.hm_logger.log_stage("4c", "MESSAGE4", "Generating my strategic response", 
+                                   data={'opponent_strategy': possible_opponent_strategy, 'opponent_prediction': other_player_next_action})
+            
+            start_time = time_module.time()
+            hls_user_msg4 = self.generate_interaction_feedback_user_message4(time, possible_opponent_strategy)
+            responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg4])
+            my_next_strategy = responses[0]  # Already structured dict
+            end_time = time_module.time()
+            latency = (end_time - start_time) * 1000
+            
+            self.hm_logger.log_llm_interaction("Message4", hls_user_msg4, str(my_next_strategy), latency_ms=latency)
+            self.hm_logger.log_decision("NEW_HYPOTHESIS_DECISION", my_next_strategy.get('my_next_quote_price'), 
+                                      my_next_strategy.get('reasoning', 'No reasoning provided'))
+            
+            return my_next_strategy
         
         else:
-            # EXACT HM PATTERN: Initial decision without prior interaction
-            # Generate high-level strategy for initial action
-            hls_user_msg = self.generate_hls_user_message(lob, time, countdown)
-            responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg])
-            response = responses[0]
-            my_strategy = self.extract_dict(response)
+            # Use best existing hypothesis for strategic planning
+            self.hm_logger.log_stage("4c", "BEST_HYPOTHESIS_PATH", f"Using best existing hypothesis from {len(self.opponent_hypotheses)} total")
             
-            return my_strategy
+            sorted_keys = sorted([key for key in self.opponent_hypotheses], 
+                               key=lambda x: self.opponent_hypotheses[x]['value'], reverse=True)
+            best_key = sorted_keys[0]
+            
+            # Ensure hypothesis meets threshold
+            best_value = self.opponent_hypotheses[best_key]['value']
+            assert best_value > self.good_hypothesis_thr, f"Best hypothesis value {best_value} below threshold {self.good_hypothesis_thr}"
+            
+            best_hypothesis = self.opponent_hypotheses[best_key]
+            self.hm_logger.log_learning("BEST_HYPOTHESIS_SELECTED", 
+                                      f"Key: {best_key}, Value: {best_value}", 
+                                      best_hypothesis.get('possible_other_player_strategy', 'Unknown strategy'))
+            
+            # Predict opponent next action using best hypothesis
+            self.hm_logger.log_stage("4c", "BEST_MESSAGE3", "Predicting opponent action with best hypothesis", 
+                                   data={'best_hypothesis': best_hypothesis, 'hypothesis_value': best_value})
+            
+            import time as time_module
+            start_time = time_module.time()
+            hls_user_msg3 = self.generate_interaction_feedback_user_message3(time, best_hypothesis)
+            responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg3])
+            other_player_next_action = responses[0]  # Already structured dict
+            end_time = time_module.time()
+            latency = (end_time - start_time) * 1000
+            
+            self.hm_logger.log_llm_interaction("BestMessage3", hls_user_msg3, str(other_player_next_action), latency_ms=latency)
+            
+            # Update best hypothesis
+            self.opponent_hypotheses[best_key]['other_player_next_action'] = other_player_next_action
+            
+            # Generate my strategic response based on best hypothesis
+            self.hm_logger.log_stage("4c", "BEST_MESSAGE4", "Generating strategic response with best hypothesis", 
+                                   data={'best_hypothesis': best_hypothesis, 'opponent_prediction': other_player_next_action})
+            
+            start_time = time_module.time()
+            hls_user_msg4 = self.generate_interaction_feedback_user_message4(time, best_hypothesis)
+            responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg4])
+            my_next_strategy = responses[0]  # Already structured dict
+            end_time = time_module.time()
+            latency = (end_time - start_time) * 1000
+            
+            self.hm_logger.log_llm_interaction("BestMessage4", hls_user_msg4, str(my_next_strategy), latency_ms=latency)
+            self.hm_logger.log_decision("BEST_HYPOTHESIS_DECISION", my_next_strategy.get('my_next_quote_price'), 
+                                      my_next_strategy.get('reasoning', 'No reasoning provided'))
+            
+            return my_next_strategy
 
     def generate_hls_user_message(self, lob: Dict[str, Any], time: float, countdown: float):
         """
@@ -480,24 +603,31 @@ class DecentralizedAgent(Trader, abc.ABC):
             - Potential competitor strategies
             - Long-term profit maximization
             
-            Provide your response in Python dictionary format:
-            ```python
-            {{
-              'my_next_quote_price': 125,
-              'reasoning': 'Initial market analysis and strategy',
-              'confidence': 0.7
-            }}
-            ```
+            What should your initial quote price be? Provide your reasoning and confidence level.
             """
         return user_message
 
     def eval_hypotheses(self):
         """
-        EXACT MIRROR: HM's eval_hypotheses method (lines 665-712)
+        (4g) LEARNING: Evaluate and update opponent strategy hypotheses
         
-        Evaluates opponent strategy hypotheses using exact Rescorla-Wagner update logic
+        INTUITION: This is the agent's "learning engine". Using Rescorla-Wagner learning,
+        the agent compares its predictions against reality. Good predictions increase
+        hypothesis confidence, bad predictions decrease it. Over time, the agent builds
+        increasingly accurate models of opponent behavior patterns.
         """
+        eval_context = {
+            'total_hypotheses': len(self.opponent_hypotheses),
+            'good_hypothesis_found_before': self.good_hypothesis_found,
+            'interaction_history_length': len(self.interaction_history),
+            'alpha': self.alpha,
+            'good_hypothesis_thr': self.good_hypothesis_thr,
+            'correct_guess_reward': self.correct_guess_reward
+        }
+        self.hm_logger.log_stage("4h", "EVAL_HYPOTHESES_START", "Beginning hypothesis evaluation", extra_context=eval_context)
+        
         if not self.opponent_hypotheses:
+            self.hm_logger.log_stage("4h", "EVAL_HYPOTHESES_SKIP", "No hypotheses to evaluate")
             return
             
         # EXACT HM PATTERN: Get latest key and sort others
@@ -507,20 +637,42 @@ class DecentralizedAgent(Trader, abc.ABC):
                            reverse=True)
         keys2eval = sorted_keys[:self.top_k] + [latest_key]
         
+        eval_setup = {
+            'latest_key': latest_key,
+            'sorted_keys': sorted_keys,
+            'top_k': self.top_k,
+            'keys2eval': keys2eval,
+            'keys2eval_count': len(keys2eval)
+        }
+        self.hm_logger.log_stage("4h", "EVAL_SELECTION", f"Selected {len(keys2eval)} hypotheses for evaluation", data=eval_setup)
+        
         # EXACT HM PATTERN: Reset good hypothesis flag
         self.good_hypothesis_found = False
         
+        evaluation_results = []
+        
         for key in keys2eval:
+            self.hm_logger.log_stage("4h", "EVAL_HYPOTHESIS", f"Evaluating hypothesis {key}", 
+                                   data={'hypothesis': self.opponent_hypotheses[key]})
+            
             # EXACT HM PATTERN: Evaluate prediction accuracy
             if 'other_player_next_action' not in self.opponent_hypotheses[key]:
+                self.hm_logger.log_stage("4h", "EVAL_SKIP", f"Hypothesis {key} missing other_player_next_action")
                 continue
                 
             # Get predicted vs actual trading behavior
             predicted_data = self.opponent_hypotheses[key]['other_player_next_action']
             
             if 'predicted_other_trader_next_price' not in predicted_data:
-                # Default to neutral prediction
-                predicted_data['predicted_other_trader_next_price'] = 150
+                error_context = {
+                    'hypothesis_key': key,
+                    'predicted_data': predicted_data,
+                    'hypothesis': self.opponent_hypotheses[key]
+                }
+                self.hm_logger.log_error("4h", "Missing predicted_other_trader_next_price", error_context)
+                raise ValueError(f"CRITICAL ERROR: Missing 'predicted_other_trader_next_price' in hypothesis evaluation. "
+                               f"Predicted data: {predicted_data}. This should never happen with proper schema enforcement. "
+                               f"FIX IMMEDIATELY - no silent fallbacks in development phase!")
                 
             predicted_price = predicted_data['predicted_other_trader_next_price']
             
@@ -529,158 +681,323 @@ class DecentralizedAgent(Trader, abc.ABC):
                 last_interaction = self.interaction_history[-1]
                 actual_price = last_interaction.get('actual_competitor_price')
                 
+                comparison_data = {
+                    'hypothesis_key': key,
+                    'predicted_price': predicted_price,
+                    'actual_price': actual_price,
+                    'last_interaction': last_interaction
+                }
+                
                 if actual_price is not None:
                     # EXACT HM PATTERN: Binary evaluation of prediction accuracy
                     price_diff = abs(predicted_price - actual_price)
                     prediction_correct = price_diff < 10  # Trading threshold (similar to HM tie handling)
                     
+                    old_value = self.opponent_hypotheses[key]['value']
+                    
                     # EXACT HM RESCORLA-WAGNER UPDATE
                     if prediction_correct:
-                        prediction_error = self.correct_guess_reward - self.opponent_hypotheses[key]['value']
+                        prediction_error = self.correct_guess_reward - old_value
                     else:
-                        prediction_error = -self.correct_guess_reward - self.opponent_hypotheses[key]['value']
+                        prediction_error = -self.correct_guess_reward - old_value
                     
                     # Update value using exact HM formula
-                    self.opponent_hypotheses[key]['value'] = self.opponent_hypotheses[key]['value'] + (self.alpha * prediction_error)
+                    new_value = old_value + (self.alpha * prediction_error)
+                    self.opponent_hypotheses[key]['value'] = new_value
                     
                     # EXACT HM PATTERN: Check for good hypothesis
-                    if self.opponent_hypotheses[key]['value'] > self.good_hypothesis_thr:
+                    is_good_hypothesis = new_value > self.good_hypothesis_thr
+                    if is_good_hypothesis:
                         self.good_hypothesis_found = True
-
-    def extract_dict(self, response: str) -> Dict[str, Any]:
-        """
-        EXACT MIRROR: HM's extract_dict method (lines 714-746)
-        
-        Extract dictionary from LLM response using exact same parsing logic
-        """
-        try:
-            # EXACT HM PATTERN: Find JSON code markers
-            start_marker = "```python\n"
-            end_marker = "\n```"         
-            start_pos = response.find(start_marker)
-            
-            if start_pos == -1:
-                # Try alternative markers
-                start_marker = "```python"
-                start_pos = response.find(start_marker)
-                if start_pos != -1:
-                    start_index = start_pos + len(start_marker)
-                    brace_start = response.find('{', start_index)
-                    if brace_start != -1:
-                        brace_count = 0
-                        end_index = brace_start
-                        for i, char in enumerate(response[brace_start:], brace_start):
-                            if char == '{':
-                                brace_count += 1
-                            elif char == '}':
-                                brace_count -= 1
-                                if brace_count == 0:
-                                    end_index = i + 1
-                                    break
-                        dict_str = response[brace_start:end_index].strip()
-                    else:
-                        raise ValueError("No dictionary found after ```python marker")
+                    
+                    # Comprehensive evaluation result
+                    eval_result = {
+                        'hypothesis_key': key,
+                        'predicted_price': predicted_price,
+                        'actual_price': actual_price,
+                        'price_diff': price_diff,
+                        'prediction_correct': prediction_correct,
+                        'old_value': old_value,
+                        'prediction_error': prediction_error,
+                        'alpha': self.alpha,
+                        'new_value': new_value,
+                        'is_good_hypothesis': is_good_hypothesis,
+                        'good_hypothesis_threshold': self.good_hypothesis_thr
+                    }
+                    evaluation_results.append(eval_result)
+                    
+                    self.hm_logger.log_learning("HYPOTHESIS_UPDATE", 
+                                              f"Key {key}: {old_value:.4f} → {new_value:.4f}", 
+                                              eval_result)
+                    
                 else:
-                    raise ValueError("Python dictionary markers not found in LLM response.")
+                    self.hm_logger.log_stage("4h", "EVAL_NO_ACTUAL_PRICE", f"Hypothesis {key} - no actual price available", 
+                                           data=comparison_data)
             else:
-                start_index = start_pos + len(start_marker)
-                end_index = response.find(end_marker, start_index)
-                if end_index == -1:
-                    end_index = response.find("```", start_index)
-                    if end_index == -1:
-                        raise ValueError("Python dictionary end markers not found in LLM response.")
-                dict_str = response[start_index: end_index].strip()
-
-            # EXACT HM PATTERN: Process lines, skip comments
-            lines = dict_str.split('\n')
-            cleaned_lines = []
-            for line in lines:
-                comment_index = line.find('#')
-                if comment_index != -1:
-                    line = line[:comment_index].strip()
-                if line:
-                    cleaned_lines.append(line)
-
-            cleaned_dict_str = ' '.join(cleaned_lines)
-         
-            # EXACT HM PATTERN: Convert to dictionary
-            import ast
-            extracted_dict = ast.literal_eval(cleaned_dict_str)
-            return extracted_dict
-            
-        except Exception as e:
-            print(f"Error parsing dictionary: {e}")
-            print(f"Raw response: {response[:500]}")
-            raise ValueError(f"LLM response parsing failed: {e}")
+                self.hm_logger.log_stage("4h", "EVAL_NO_HISTORY", f"Hypothesis {key} - no interaction history available")
+        
+        # Final evaluation summary
+        final_summary = {
+            'evaluations_completed': len(evaluation_results),
+            'good_hypothesis_found_after': self.good_hypothesis_found,
+            'hypothesis_values': {k: v['value'] for k, v in self.opponent_hypotheses.items()},
+            'evaluation_results': evaluation_results
+        }
+        self.hm_logger.log_stage("4h", "EVAL_HYPOTHESES_COMPLETE", 
+                               f"Hypothesis evaluation complete - good hypothesis found: {self.good_hypothesis_found}", 
+                               extra_context=final_summary)
 
     # BSE Integration Methods
     
     def getorder(self, time: float, countdown: float, lob: Dict[str, Any]):
         """
-        BSE integration point - uses HM two_level_plan for order generation
+        (4b) AGENT.ACT(): BSE calls this when agent needs to make a trading decision
+        
+        INTUITION: This is the main action interface. BSE asks "what do you want to trade?"
+        The HM agent doesn't just react to current market - it activates the full HM
+        reasoning pipeline: analyze situation, model opponents, generate hypotheses,
+        and make strategic decisions using two_level_plan.
         """
+        order_context = {
+            'time': time,
+            'countdown': countdown,
+            'customer_orders': len(self.orders),
+            'balance': self.balance,
+            'interaction_history': len(self.interaction_history),
+            'hypotheses_count': len(self.opponent_hypotheses),
+            'good_hypothesis_found': self.good_hypothesis_found
+        }
+        self.hm_logger.log_stage("4b", "GET_ORDER_START", f"BSE requesting order at time {time:.2f}, countdown {countdown:.2f}", 
+                                extra_context=order_context)
+        self.hm_logger.log_market_state(time, lob, self.balance, self.orders)
+        
         if len(self.orders) < 1:
+            self.hm_logger.log_stage("4b", "NO_ORDERS", "No customer orders to process - returning None")
             return None
             
         if not self.controller:
+            self.hm_logger.log_error("4b", "No LLM controller available", "Cannot generate strategic decision - returning None")
             return None
         
         try:
-            # Determine if this is after a trade interaction
-            after_interaction = (len(self.interaction_history) > 0 and 
-                               time - self.interaction_history[-1].get('time', 0) < 1.0)
+            # Log customer order details
+            order = self.orders[0]
+            customer_order_details = {
+                'type': order.otype,
+                'price_limit': order.price,
+                'quantity': order.qty,
+                'order_id': getattr(order, 'qid', 'Unknown')
+            }
+            self.hm_logger.log_stage("4b", "CUSTOMER_ORDER_DETAILS", "Processing customer order", data=customer_order_details)
             
-            # Use HM two_level_plan
+            # DESIGN CHOICE: Use separated HM method for pure action planning
+            # This method uses accumulated opponent hypotheses if available, or basic strategy if not
+            # NO LEARNING happens here - that's reserved for respond() method
+            
+            import time as time_module
+            decision_start = time_module.time()
+            self.hm_logger.log_stage("4b", "STRATEGIC_DECISION_START", "Triggering HM strategic planning")
+            
             decision_result = asyncio.run(
-                self.two_level_plan(lob, time, countdown, after_interaction)
+                self.plan_action_with_hypotheses(lob, time, countdown)
             )
+            
+            decision_end = time_module.time()
+            decision_latency = (decision_end - decision_start) * 1000
             
             # Extract quote price from HM decision
             quote_price = decision_result.get('my_next_quote_price', 150)
+            decision_reasoning = decision_result.get('reasoning', 'No reasoning provided')
+            decision_confidence = decision_result.get('confidence', 'Unknown')
             
-            # Create BSE order
-            order = self.orders[0]
+            decision_summary = {
+                'raw_hm_price': quote_price,
+                'reasoning': decision_reasoning,
+                'confidence': decision_confidence,
+                'decision_latency_ms': decision_latency
+            }
+            self.hm_logger.log_stage("4d", "HM_DECISION_COMPLETE", "HM strategic decision completed", data=decision_summary)
+            
+            # Create BSE order with price validation
             quoteprice = int(max(1, min(500, quote_price)))
+            original_quoteprice = quoteprice
             
-            # Ensure we don't violate limit price
+            # Ensure we don't violate customer limit price
+            price_adjustment = False
             if order.otype == 'Bid' and quoteprice > order.price:
+                self.hm_logger.log_decision("PRICE_LIMIT_BID", f"Bid {quoteprice} limited to customer max {order.price}")
                 quoteprice = order.price
+                price_adjustment = True
             elif order.otype == 'Ask' and quoteprice < order.price:
+                self.hm_logger.log_decision("PRICE_LIMIT_ASK", f"Ask {quoteprice} limited to customer min {order.price}")
                 quoteprice = order.price
+                price_adjustment = True
             
             new_order = Order(self.tid, order.otype, quoteprice, order.qty, time, lob['QID'])
             self.lastquote = new_order
             
+            final_order_summary = {
+                'order_type': order.otype,
+                'final_price': quoteprice,
+                'quantity': order.qty,
+                'hm_suggested_price': quote_price,
+                'bse_adjusted_price': original_quoteprice,
+                'customer_limit_applied': price_adjustment,
+                'customer_limit_price': order.price
+            }
+            self.hm_logger.log_stage("4d", "ORDER_CREATION_COMPLETE", "BSE order created from HM decision", data=final_order_summary)
+            self.hm_logger.log_decision("FINAL_ORDER", f"{order.otype} {quoteprice}", 
+                                      f"HM: {quote_price} → BSE: {original_quoteprice} → Final: {quoteprice}")
             return new_order
             
         except Exception as e:
+            error_details = {
+                'error_type': type(e).__name__,
+                'error_message': str(e),
+                'time': time,
+                'trader_id': self.tid
+            }
+            self.hm_logger.log_error("4b", f"Order generation failed: {e}", error_details)
             print(f"HM order generation failed for {self.tid}: {e}")
             return None
 
     def respond(self, time: float, lob: Dict[str, Any], trade: Any, vrbs: bool):
         """
-        BSE integration point - updates HM state on market events
-        """
-        # Update profit tracking
-        self.profitpertime = self.profitpertime_update(time, self.birthtime, self.balance)
+        (4f) EXECUTION: Process market events and update agent state
         
-        # Update HM memory states
-        self.update_memory_states(lob, time)
+        INTUITION: This is where the agent "learns from experience". When a trade happens,
+        the agent updates its memory, records the interaction, and prepares data for
+        hypothesis evaluation. It's like the agent saying "I predicted X, actual was Y,
+        let me update my beliefs about opponent strategies."
+        """
+        respond_context = {
+            'time': time,
+            'has_trade': bool(trade),
+            'current_balance': self.balance,
+            'n_trades': self.n_trades,
+            'interaction_history_length': len(self.interaction_history),
+            'hypotheses_count': len(self.opponent_hypotheses)
+        }
         
         if trade:
-            # Update HM interaction tracking
-            self.interaction_history.append({
+            trade_details = {
+                'price': getattr(trade, 'price', 'Unknown'),
+                'qty': getattr(trade, 'qty', 'Unknown'),
+                'buyer': getattr(trade, 'buyer', 'Unknown'),
+                'seller': getattr(trade, 'seller', 'Unknown'),
+                'timestamp': getattr(trade, 'timestamp', time)
+            }
+            respond_context['trade_details'] = trade_details
+            self.hm_logger.log_stage("4f", "RESPOND_TRADE_START", f"Processing trade at time {time:.2f}", 
+                                   extra_context=respond_context)
+            self.hm_logger.log_market_state(time, lob, self.balance, self.orders)
+        else:
+            self.hm_logger.log_stage("4f", "RESPOND_NO_TRADE", f"No trade occurred at time {time:.2f}", 
+                                   extra_context=respond_context)
+            
+        # Update profit tracking
+        old_profit = self.profitpertime
+        self.profitpertime = self.profitpertime_update(time, self.birthtime, self.balance)
+        
+        profit_update = {
+            'old_profitpertime': old_profit,
+            'new_profitpertime': self.profitpertime,
+            'balance': self.balance,
+            'birthtime': self.birthtime
+        }
+        self.hm_logger.log_stage("4f", "PROFIT_UPDATE", "Updated profit per time metric", data=profit_update)
+        
+        # Update HM memory states
+        memory_before = {
+            'interact_steps': self.interact_steps,
+            'interaction_num': self.interaction_num,
+            'good_hypothesis_found': self.good_hypothesis_found
+        }
+        self.update_memory_states(lob, time)
+        memory_after = {
+            'interact_steps': self.interact_steps,
+            'interaction_num': self.interaction_num,
+            'good_hypothesis_found': self.good_hypothesis_found
+        }
+        self.hm_logger.log_learning("MEMORY_STATE_UPDATE", memory_before, memory_after)
+        
+        if trade:
+            # Detailed interaction data construction
+            trade_price = getattr(trade, 'price', None) if hasattr(trade, 'price') else trade.get('price') if isinstance(trade, dict) else None
+            your_quote_price = self.lastquote.price if self.lastquote else None
+            
+            interaction_data = {
                 'time': time,
                 'event': 'trade',
-                'trade': trade,
-                'your_quote': self.lastquote.price if self.lastquote else None,
-                'actual_competitor_price': trade.get('price') if isinstance(trade, dict) else None
-            })
+                'trade_object': str(trade),
+                'your_quote': your_quote_price,
+                'actual_competitor_price': trade_price,
+                'trade_involved_us': (getattr(trade, 'buyer', None) == self.tid or getattr(trade, 'seller', None) == self.tid),
+                'price_difference': abs(trade_price - your_quote_price) if trade_price and your_quote_price else None
+            }
+            
+            # Store interaction in history
+            old_history_length = len(self.interaction_history)
+            old_interact_steps = self.interact_steps
+            old_interaction_num = self.interaction_num
+            
+            self.interaction_history.append(interaction_data)
             self.interact_steps += 1
             self.interaction_num += 1
             
-            # Log trade response
+            history_update = {
+                'old_history_length': old_history_length,
+                'new_history_length': len(self.interaction_history),
+                'old_interact_steps': old_interact_steps,
+                'new_interact_steps': self.interact_steps,
+                'old_interaction_num': old_interaction_num,
+                'new_interaction_num': self.interaction_num,
+                'latest_interaction': interaction_data
+            }
+            self.hm_logger.log_stage("4f", "INTERACTION_RECORDED", f"Recorded interaction #{self.interaction_num}", 
+                                   extra_context=history_update)
+            
+            # DESIGN CHOICE: Use separated HM method for pure learning
+            # This method ONLY analyzes the trade outcome and updates opponent models
+            # NO ACTION PLANNING happens here - that's reserved for getorder() method
+            try:
+                import time as time_module
+                learning_start = time_module.time()
+                self.hm_logger.log_stage("4f", "LEARNING_TRIGGER", "Triggering comprehensive HM learning from interaction")
+                
+                asyncio.run(self.learn_from_interaction(lob, time))
+                
+                learning_end = time_module.time()
+                learning_latency = (learning_end - learning_start) * 1000
+                
+                learning_summary = {
+                    'learning_latency_ms': learning_latency,
+                    'interaction_analyzed': self.interaction_num,
+                    'hypotheses_after_learning': len(self.opponent_hypotheses),
+                    'good_hypothesis_found_after': self.good_hypothesis_found
+                }
+                self.hm_logger.log_stage("4f", "LEARNING_COMPLETE", "HM learning completed successfully", 
+                                       data=learning_summary)
+                
+            except Exception as e:
+                error_context = {
+                    'error_type': type(e).__name__,
+                    'error_message': str(e),
+                    'interaction_num': self.interaction_num,
+                    'trader_id': self.tid,
+                    'time': time
+                }
+                self.hm_logger.log_error("4f", f"Learning failed: {e}", error_context)
+                print(f"HM learning failed in respond() for {self.tid}: {e}")
+            
+            # Log trade response for BSE compatibility
             if hasattr(self, 'trader_logger'):
-                self.trader_logger.log_trade_response(trade, "Updated HM interaction history")
+                response_summary = "Updated HM interaction history and learned from outcome"
+                self.trader_logger.log_trade_response(trade, response_summary)
+                
+            self.hm_logger.log_stage("4f", "RESPOND_TRADE_COMPLETE", 
+                                   f"Trade response processing completed for interaction #{self.interaction_num}")
+        else:
+            self.hm_logger.log_stage("4f", "RESPOND_NO_TRADE_COMPLETE", "No-trade response processing completed")
         
         return None

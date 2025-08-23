@@ -20,9 +20,36 @@ class TraderLLM_HM:
     to the authentic HM implementation in bse_hypothetical_minds.py
     """
     
+    # HYPOTHETICAL-MINDS AGENT FLOW (UPDATED FOR BSE SEPARATION):
+    # (1) initialize → (2) env setup → (3) agent create → (4) trading loop {
+    #     (4a) BSE market reset → (4b) agent.act() → (4c) strategic_planning → (4d) order_creation → 
+    #     (4e) market.step() → (4f) IF trade: respond() → (4g) learning → (4h) hypothesis_update → (4i) next_iteration
+    # }
+    #
+    # STEP LOCATIONS (DESIGN CHANGE: SEPARATED LEARNING FROM ACTION):
+    # (1) initialize: hm_trader/core.py → TraderLLM_HM.__init__()
+    # (2) env setup: hm_trader/llm_controller.py → LLMInterface._initialize_controller()
+    # (3) agent create: hm_trader/bse_trading/bse_hypothetical_minds.py → DecentralizedAgent.__init__()
+    # (4a) market reset: BSE.py → market session initialization
+    # (4b) agent.act(): hm_trader/bse_trading/bse_hypothetical_minds.py → DecentralizedAgent.getorder()
+    # (4c) strategic_planning: hm_trader/bse_trading/bse_hypothetical_minds.py → plan_action_with_hypotheses()
+    # (4d) order_creation: hm_trader/bse_trading/bse_hypothetical_minds.py → BSE order generation logic
+    # (4e) market.step(): BSE.py → order matching and trade execution in market
+    # (4f) respond(): hm_trader/bse_trading/bse_hypothetical_minds.py → DecentralizedAgent.respond()
+    # (4g) learning: hm_trader/bse_trading/bse_hypothetical_minds.py → learn_from_interaction()
+    # (4h) hypothesis_update: hm_trader/bse_trading/bse_hypothetical_minds.py → eval_hypotheses() + opponent modeling
+    # (4i) next_iteration: BSE.py → continue trading loop
+    #
+    # KEY DESIGN CHANGE: Original HM combined learning+action in two_level_plan().
+    # BSE requires separation: getorder() = pure action, respond() = pure learning.
+    
     def __init__(self, ttype: str, tid: str, balance: float, params: Optional[Dict[str, Any]], time: float):
         """
-        Initialize BSE-compatible HM trader
+        (1) INITIALIZE: Set up HM trader with BSE compatibility
+        
+        INTUITION: This is the birth of an HM agent. We create a wrapper that connects
+        BSE's trading interface to the authentic Hypothetical-Minds reasoning system.
+        The agent gets its identity, starting resources, and core configuration.
         
         Args:
             ttype: Trader type 
@@ -39,6 +66,11 @@ class TraderLLM_HM:
         
         # Initialize LLM controller 
         llm_interface = LLMInterface(tid)
+        
+        # Log the initialization step
+        import logging
+        hm_logger = logging.getLogger('BSE.LLM_HM')
+        hm_logger.info(f"[{tid}] STAGE (1) INITIALIZE | Creating TraderLLM_HM wrapper for HM agent")
         
         # Create authentic HM DecentralizedAgent
         from .bse_trading.bse_hypothetical_minds import DecentralizedAgent

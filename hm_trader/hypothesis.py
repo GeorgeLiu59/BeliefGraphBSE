@@ -70,7 +70,8 @@ class HypothesisManager:
         try:
             # Get LLM response
             response = await llm_interface.get_response(system_message, hypothesis_msg)
-            hypothesis_data = llm_interface.extract_json_dict(response)
+            # Response is already extracted by the LLM controller
+            hypothesis_data = response
             
             if 'opponent_strategy' not in hypothesis_data:
                 raise ValueError(f"LLM response missing required 'opponent_strategy' key. Got: {hypothesis_data}")
@@ -111,7 +112,8 @@ class HypothesisManager:
         
         try:
             response = await llm_interface.get_response(system_message, prediction_msg)
-            prediction_data = llm_interface.extract_json_dict(response)
+            # Response is already extracted by the LLM controller
+            prediction_data = response
             
             return prediction_data
             
@@ -239,23 +241,10 @@ class HypothesisManager:
 A trading interaction has occurred at time {time}. Recent interaction history: {recent_interactions}.
 Previous hypotheses about opponent strategies: {top_hypotheses}.
 
-What is the opponent's likely trading strategy given the price actions and market context?
-Think step by step about their trading pattern:
-- Do they tend to be aggressive (bid high/ask low) or conservative?
-- Do they respond to market momentum or counter-trend?
-- Are they predictable or adaptive?
+STRATEGY: What is the opponent's likely trading strategy?
+ANSWER: "They appear to be using [STRATEGY] strategy with [CONFIDENCE]% confidence."
 
-ABSOLUTELY CRITICAL - SYSTEM WILL CRASH IF NOT FOLLOWED:
-- You MUST respond with ONLY the JSON format below
-- NO explanations, NO additional text, NO markdown formatting
-- ONLY the JSON block with ```json markers
-- Any other text will cause immediate system failure
-
-```json
-{{
-  "opponent_strategy": "Description of their likely trading strategy and behavior pattern"
-}}
-```
+Keep response short and direct.
 """
     
     def _create_prediction_message(self, hypothesis: Optional[Dict[str, Any]], time: float) -> str:
@@ -272,21 +261,10 @@ ABSOLUTELY CRITICAL - SYSTEM WILL CRASH IF NOT FOLLOWED:
 {prompt_context}
 And the recent interaction: {recent_interaction}
 
-Predict what price range the opponent will quote next.
-Consider their strategy pattern and recent market behavior.
+PREDICT: What price will the opponent quote next?
+ANSWER: "Competing traders will likely quote around [PRICE] with [CONFIDENCE]% confidence."
 
-ABSOLUTELY CRITICAL - SYSTEM WILL CRASH IF NOT FOLLOWED:
-- You MUST respond with ONLY the JSON format below
-- NO explanations, NO additional text, NO markdown formatting
-- ONLY the JSON block with ```json markers
-- Any other text will cause immediate system failure
-
-```json
-{{
-  "predicted_opponent_next_price": 125,
-  "confidence": 0.7
-}}
-```
+Keep response short and direct.
 """
     
     def get_status(self) -> Dict[str, Any]:

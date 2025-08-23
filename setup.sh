@@ -38,9 +38,8 @@ if [ ! -f ".env" ]; then
     echo "️  Creating .env file..."
     cat > .env << EOF
 GOOGLE_API_KEY=your_google_generative_ai_api_key_here
-OPENAI_API_KEY=your_openai_api_key_here
 EOF
-    echo "Please edit .env file with your actual API keys"
+    echo "Please edit .env file with your actual API key"
 else
     echo ".env file already exists"
 fi
@@ -49,7 +48,7 @@ fi
 echo "Testing installation..."
 python3 -c "
 try:
-    import numpy, matplotlib, google.generativeai, openai, omegaconf
+    import numpy, matplotlib, google.generativeai, omegaconf
     from dotenv import load_dotenv
     print('All dependencies imported successfully')
 except ImportError as e:
