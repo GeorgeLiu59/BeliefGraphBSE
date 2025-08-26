@@ -120,7 +120,7 @@ Agent is ready to begin Hypothetical-Minds reasoning!""")
         # BSE-specific state
         self.max_history = 50
         self.possible_opponent_strategy = None
-        self.possible_opponent_price = None
+        self.possible_opponent_strategy = None
 
     def generate_system_message(self):
         """
@@ -221,19 +221,35 @@ Agent is ready to begin Hypothetical-Minds reasoning!""")
             return "No interaction history available yet."
             
         last_interaction = self.interaction_history[-1]
+        # Get full market context
+        current_lob = getattr(self, 'current_lob', {})
+        recent_trades = current_lob.get('tape', [])[-10:] if current_lob.get('tape') else []
+        best_bid = current_lob.get('bids', {}).get('best', 'None')
+        best_ask = current_lob.get('asks', {}).get('best', 'None')
+        spread = best_ask - best_bid if best_bid != 'None' and best_ask != 'None' else 'Wide'
+        
         user_message = f"""
-            Market Analysis - Step {step}
+            MARKET INTELLIGENCE ANALYSIS - Step {step}
+            
+            === FULL MARKET CONTEXT ===
+            Current LOB: Best Bid: {best_bid}, Best Ask: {best_ask}, Spread: {spread}
+            Recent Market Trades: {recent_trades}
+            Your Balance: {getattr(self, 'balance', 0)}
+            Market Time: {step}
+            
+            === TARGET INTERACTION ===
             Last interaction: {last_interaction}
             Your quote: {last_interaction.get('your_quote', 'N/A')}
             Actual competitor price: {last_interaction.get('actual_competitor_price', 'N/A')}
             
-            TASK: Based on this interaction, predict what price competing traders will quote next.
+            TASK: Analyze this competitor's behavioral pattern from their trading action in full market context.
             
             Consider:
-            - Their revealed pricing strategy
-            - Market conditions and trends
-            - Competition level and aggressiveness
-            - Price range is 1-500
+            - How they respond to market conditions (spread, liquidity, momentum)
+            - Their pricing relative to best bid/ask
+            - Timing and aggressiveness patterns
+            - Competitive positioning vs other traders
+            - Full market context and recent trading activity
             
             ABSOLUTELY CRITICAL - SYSTEM WILL CRASH IF NOT FOLLOWED:
             - You MUST respond with ONLY the JSON format below
@@ -243,9 +259,7 @@ Agent is ready to begin Hypothetical-Minds reasoning!""")
 
             ```json
             {{
-              "predicted_other_trader_next_price": 150,
-              "confidence": 0.7,
-              "reasoning": "Brief reasoning for this prediction"
+              "behavioral_strategy": "Detailed description of this trader's behavioral strategy and market approach"
             }}
             ```
             """
@@ -263,18 +277,33 @@ Agent is ready to begin Hypothetical-Minds reasoning!""")
         recent_interactions = self.interaction_history[-3:] if len(self.interaction_history) >= 3 else self.interaction_history
         
         # Enhanced prompt with more specific trading strategy guidance
+        # Get comprehensive market intelligence context
+        current_lob = getattr(self, 'current_lob', {})
+        recent_market_trades = current_lob.get('tape', [])[-10:] if current_lob.get('tape') else []
+        market_state = {
+            'best_bid': current_lob.get('bids', {}).get('best', 'None'),
+            'best_ask': current_lob.get('asks', {}).get('best', 'None'),
+            'recent_trades': recent_market_trades,
+            'time': step,
+            'your_balance': getattr(self, 'balance', 0)
+        }
+        
         user_message = f"""
-            Trading Analysis - Step {step}
-            Recent market interactions: {recent_interactions}
+            BEHAVIORAL STRATEGY ANALYSIS - Step {step}
             
-            TASK: Analyze the competitors' trading strategy based on their price quotes and behavior patterns.
+            === COMPLETE MARKET INTELLIGENCE ===
+            Market State: {market_state}
+            Your Trading History: {recent_interactions}
+            Total Market Activity: {len(recent_market_trades)} recent trades
             
-            Consider these trading strategy types:
-            - Aggressive: Quotes close to best bid/ask, seeks immediate execution
-            - Conservative: Quotes with wider spreads, prioritizes profit margins
-            - Momentum: Follows market trends, adjusts quotes based on price direction  
-            - Mean Reversion: Counter-trend trading, exploits price swings
-            - Market Making: Provides liquidity, maintains bid-ask spreads
+            TASK: Determine this competitor's overall behavioral trading strategy from all available evidence.
+            
+            Analyze their behavioral pattern across dimensions:
+            - Market Response: How do they react to spread changes, liquidity, momentum?
+            - Competitive Style: Aggressive (quick execution) vs Conservative (wide margins)?
+            - Timing Patterns: Early mover, follower, or opportunistic?
+            - Adaptation: Do they adjust to market conditions and other traders?
+            - Strategic Intent: Market making, profit maximization, volume seeking?
             
             ABSOLUTELY CRITICAL - SYSTEM WILL CRASH IF NOT FOLLOWED:
             - You MUST respond with ONLY the JSON format below
@@ -427,12 +456,12 @@ Last Interaction: {self.interaction_history[-1] if self.interaction_history else
         raw_response = responses[0][0] if isinstance(responses[0], list) else responses[0]
         
         # Parse the LLM response properly
-        possible_opponent_price = self.extract_dict(raw_response)
+        possible_opponent_strategy = self.extract_dict(raw_response)
         
         self.hm_logger.print_style_log('debug', f"""=== LEARNING MESSAGE 1 PARSING ===
 Trader: {self.tid}
 Raw Response: {raw_response}
-Parsed Price Data: {possible_opponent_price}""")
+Parsed Strategy Data: {possible_opponent_strategy}""")
         
         end_time = time_module.time()
         latency = (end_time - start_time) * 1000
@@ -441,47 +470,47 @@ Parsed Price Data: {possible_opponent_price}""")
 Trader: {self.tid}
 Latency: {latency:.2f}ms
 Prompt: {hls_user_msg1}
-Response: {str(possible_opponent_price)}""")
+Response: {str(possible_opponent_strategy)}""")
         
         # Validate required key with improved error handling
-        if 'predicted_other_trader_next_price' not in possible_opponent_price:
+        if 'behavioral_strategy' not in possible_opponent_strategy:
             self.hm_logger.print_style_log('error', f"""=== CRITICAL LLM ERROR (4g) ===
 Trader: {self.tid}
-Error: Missing predicted_other_trader_next_price
-Response: {str(possible_opponent_price)}
-Keys Found: {list(possible_opponent_price.keys()) if isinstance(possible_opponent_price, dict) else 'Not a dict'}
-Response Type: {type(possible_opponent_price)}
+Error: Missing behavioral_strategy
+Response: {str(possible_opponent_strategy)}
+Keys Found: {list(possible_opponent_strategy.keys()) if isinstance(possible_opponent_strategy, dict) else 'Not a dict'}
+Response Type: {type(possible_opponent_strategy)}
 This indicates schema enforcement is broken - FIX IMMEDIATELY!""")
             
             # Try to extract a reasonable fallback value to prevent total failure
-            fallback_price = None
-            if isinstance(possible_opponent_price, dict):
+            fallback_strategy = None
+            if isinstance(possible_opponent_strategy, dict):
                 # Look for alternative key patterns
-                for key in possible_opponent_price.keys():
-                    if 'price' in key.lower() and isinstance(possible_opponent_price[key], (int, float)):
-                        fallback_price = possible_opponent_price[key]
+                for key in possible_opponent_strategy.keys():
+                    if 'strategy' in key.lower() or 'behavior' in key.lower():
+                        fallback_strategy = possible_opponent_strategy[key]
                         break
             
-            if fallback_price:
-                self.hm_logger.print_style_log('warning', f"""=== USING FALLBACK PRICE ===
+            if fallback_strategy:
+                self.hm_logger.print_style_log('warning', f"""=== USING FALLBACK STRATEGY ===
 Trader: {self.tid}
-Found alternative price: {fallback_price}
+Found alternative strategy: {fallback_strategy}
 Using this to continue learning process""")
-                possible_opponent_price['predicted_other_trader_next_price'] = fallback_price
+                possible_opponent_strategy['behavioral_strategy'] = fallback_strategy
             else:
-                raise ValueError(f"CRITICAL ERROR: LLM failed to provide required 'predicted_other_trader_next_price' field. "
-                               f"Response: {possible_opponent_price}. This indicates schema enforcement is broken or "
+                raise ValueError(f"CRITICAL ERROR: LLM failed to provide required 'behavioral_strategy' field. "
+                               f"Response: {possible_opponent_strategy}. This indicates schema enforcement is broken or "
                                f"message content detection failed. FIX IMMEDIATELY - no fallbacks in development phase!")
             
-        self.possible_opponent_price = possible_opponent_price
+        self.possible_opponent_strategy = possible_opponent_strategy
         self.hm_logger.print_style_log('info', f"""=== OPPONENT ANALYSIS DECISION ===
 Trader: {self.tid}
-Predicted Price: {possible_opponent_price.get('predicted_other_trader_next_price')}
-Reasoning: {possible_opponent_price.get('reasoning', 'No reasoning provided')}""")
+Behavioral Strategy: {possible_opponent_strategy.get('behavioral_strategy')}
+Reasoning: {possible_opponent_strategy.get('reasoning', 'No reasoning provided')}""")
         
         # Update interaction history with opponent analysis
         old_history = self.interaction_history[-1].copy()
-        self.interaction_history[-1].update(self.possible_opponent_price)
+        self.interaction_history[-1].update(self.possible_opponent_strategy)
         self.hm_logger.print_style_log('debug', f"""=== INTERACTION UPDATE ===
 Trader: {self.tid}
 Before: {old_history}
@@ -599,46 +628,43 @@ Trader: {self.tid}
 Reason: No good hypothesis found (threshold: {self.good_hypothesis_thr})
 Will generate new opponent strategy hypothesis""")
             
-            # Action planning should NOT create new hypotheses - that happens in learning phase
-            # Instead, use a fallback strategy when no good hypotheses exist
-            self.hm_logger.print_style_log('info', f"""=== NO GOOD HYPOTHESES - FALLBACK STRATEGY ===
+            # EXACT HM PATTERN: Create new hypothesis when no good ones exist
+            self.hm_logger.print_style_log('info', f"""=== CREATING NEW HYPOTHESIS ON DEMAND ===
 Trader: {self.tid}
 Available hypotheses: {len(self.opponent_hypotheses)}
 Good hypothesis threshold: {self.good_hypothesis_thr}
-Using basic market strategy since no reliable opponent models exist
-LOB State: {strategy_context.get('lob_state', {})}""")
+No good hypotheses exist - generating new one based on recent market activity
+Following exact HM pattern: create and use new hypothesis immediately""")
             
-            # Use basic market strategy when no good hypotheses are available
-            # This is similar to the initial strategy approach but for ongoing trading
-            hls_user_msg = self.generate_hls_user_message(lob, time, countdown)
-            self.hm_logger.print_style_log('debug', f"""=== LLM INTERACTION: Basic Strategy ===
-Trader: {self.tid}
-Using basic market analysis instead of hypothesis-based strategy
-Prompt Preview: {hls_user_msg[:200]}...""")
+            # Generate new hypothesis using same logic from respond phase
+            await self._create_hypothesis_from_recent_activity(time)
             
-            import time as time_module
-            start_time = time_module.time()
+            # Now use the newly created hypothesis for strategic decision
+            return await self._strategic_planning_with_hypotheses(lob, time, countdown)
             
-            responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg])
-            raw_response = responses[0][0] if isinstance(responses[0], list) else responses[0]
+#             import time as time_module
+#             start_time = time_module.time()
             
-            # Parse the LLM response properly
-            my_strategy = self.extract_dict(raw_response)
-            end_time = time_module.time()
-            latency = (end_time - start_time) * 1000
+#             responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg])
+#             raw_response = responses[0][0] if isinstance(responses[0], list) else responses[0]
             
-            self.hm_logger.print_style_log('debug', f"""=== BASIC STRATEGY PARSING ===
-Trader: {self.tid}
-Latency: {latency:.2f}ms
-Raw Response: {raw_response}
-Parsed Strategy: {my_strategy}""")
+#             # Parse the LLM response properly
+#             my_strategy = self.extract_dict(raw_response)
+#             end_time = time_module.time()
+#             latency = (end_time - start_time) * 1000
             
-            self.hm_logger.print_style_log('info', f"""=== BASIC STRATEGY DECISION ===
-Trader: {self.tid}
-Price: {my_strategy.get('my_next_quote_price')}
-Reasoning: {my_strategy.get('reasoning', 'No reasoning provided')}""")
+#             self.hm_logger.print_style_log('debug', f"""=== BASIC STRATEGY PARSING ===
+# Trader: {self.tid}
+# Latency: {latency:.2f}ms
+# Raw Response: {raw_response}
+# Parsed Strategy: {my_strategy}""")
             
-            return my_strategy
+#             self.hm_logger.print_style_log('info', f"""=== BASIC STRATEGY DECISION ===
+# Trader: {self.tid}
+# Price: {my_strategy.get('my_next_quote_price')}
+# Reasoning: {my_strategy.get('reasoning', 'No reasoning provided')}""")
+            
+#             return my_strategy
         
         else:
             # Use best existing hypothesis for strategic planning
@@ -760,22 +786,37 @@ Used Hypothesis: {best_key} (value: {best_value:.4f})""")
             """
         return user_message
 
-    def evaluate_predicted_behavior(self, step: float, predicted_next_behavior: Dict[str, Any]) -> str:
+    def evaluate_predicted_behavior(self, hypothesis_key: int, target_trader_id: str) -> str:
         """
-        Generate prompt to evaluate if prediction matched observed behavior
+        Evaluate if current trader action agrees with stored behavioral hypothesis
+        """
+        # Get the stored hypothesis strategy
+        hypothesis = self.opponent_hypotheses.get(hypothesis_key, {})
+        hypothesis_strategy = hypothesis.get('possible_other_player_strategy', 'No strategy stored')
         
-        EXACT MIRROR: HM's evaluate_predicted_behavior pattern adapted for trading
-        """
+        # Get current interaction details
         latest_interaction = self.interaction_history[-1] if self.interaction_history else {}
-        actual_competitor_price = latest_interaction.get('actual_competitor_price', 'Unknown')
+        actual_price = latest_interaction.get('actual_competitor_price', 'Unknown')
+        
+        # Get full market context
+        current_lob = getattr(self, 'current_lob', {})
+        best_bid = current_lob.get('bids', {}).get('best', 'None')
+        best_ask = current_lob.get('asks', {}).get('best', 'None')
+        recent_trades = current_lob.get('tape', [])[-5:] if current_lob.get('tape') else []
         
         user_message = f"""
-            A trade occurred at step {step}.
-            You previously predicted that the competitor would perform this trading behavior: {predicted_next_behavior}
-            Here is the observed behavior of the competitor in this round: Price quoted: {actual_competitor_price}
-            Did your prediction match the observed behavior?
-            Concisely output True or False in the below Python dictionary format, parsable by `ast.literal_eval()` starting with ```python.
-            Example response:
+            Does {target_trader_id}'s current action match our hypothesis about their behavior?
+            
+            === OUR HYPOTHESIS ===
+            We predicted: {hypothesis_strategy}
+            
+            === WHAT THEY ACTUALLY DID ===
+            Traded at price: {actual_price}
+            Market context: Bid {best_bid}, Ask {best_ask}
+            Recent market: {recent_trades}
+            
+            Does their actual trading behavior align with our hypothesis?
+            
             ```python
             {{
               'evaluate_predicted_behavior': True
@@ -843,8 +884,7 @@ Actual Behavior: Price {actual_price}
 Original Reasoning: {reasoning}
 Preparing for LLM evaluation against actual {target_trader_id} behavior""")
                 
-                current_step = len(self.interaction_history)  # Use interaction count as step
-                hls_user_msg3 = self.evaluate_predicted_behavior(current_step, predicted_next_behavior)
+                hls_user_msg3 = self.evaluate_predicted_behavior(key, target_trader_id)
                 user_messages.append(hls_user_msg3)
                 valid_keys2eval.append(key)
                 
@@ -1126,6 +1166,9 @@ New Profit Per Time: {self.profitpertime}
 Balance: {self.balance}
 Birth Time: {self.birthtime}""")
         
+        # Store current LOB for LLM context
+        self.current_lob = lob
+        
         # Update HM memory states
         memory_before = {
             'interact_steps': self.interact_steps,
@@ -1323,41 +1366,17 @@ Reason: Invalid LLM response for strategy hypothesis
 Response: {possible_opponent_strategy}""")
             return
             
-        # Generate specific prediction for this strategy hypothesis  
-        prediction_start = time_module.time()
-        hls_user_msg3 = self.generate_interaction_feedback_user_message3(time, possible_opponent_strategy)
-        prediction_responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg3])
-        raw_prediction = prediction_responses[0][0] if isinstance(prediction_responses[0], list) else prediction_responses[0]
-        
-        predicted_action = self.extract_dict(raw_prediction)
-        prediction_end = time_module.time()
-        prediction_latency = (prediction_end - prediction_start) * 1000
-        
-        self.hm_logger.print_style_log('debug', f"""=== LLM INTERACTION: Prediction ===
-Trader: {self.tid}
-Latency: {prediction_latency:.2f}ms
-Target: {opponent_trader_id}
-Prediction Response: {str(predicted_action)}""")
-        
-        # Store new hypothesis with target trader ID and prediction
+        # Store hypothesis with just behavioral strategy (no price predictions)
         self.opponent_hypotheses[self.interaction_num] = deepcopy(possible_opponent_strategy)
         self.opponent_hypotheses[self.interaction_num]['value'] = 0  # Initialize value
         self.opponent_hypotheses[self.interaction_num]['target_trader_id'] = opponent_trader_id
+        self.opponent_hypotheses[self.interaction_num]['other_player_next_action'] = {'strategy_only': True}
         
-        # CRITICAL: Add the prediction for evaluation
-        if predicted_action and ('predicted_other_trader_next_price' in predicted_action or 'confidence' in predicted_action):
-            self.opponent_hypotheses[self.interaction_num]['other_player_next_action'] = predicted_action
-            self.hm_logger.print_style_log('info', f"""=== PREDICTION ADDED ===
+        self.hm_logger.print_style_log('info', f"""=== STRATEGY HYPOTHESIS STORED ===
 Trader: {self.tid}
 Target: {opponent_trader_id}
-Predicted Action: {predicted_action}
-This hypothesis can now be evaluated in future interactions!""")
-        else:
-            self.hm_logger.print_style_log('warning', f"""=== PREDICTION MISSING ===
-Trader: {self.tid}
-Target: {opponent_trader_id}
-Prediction Response: {predicted_action}
-Hypothesis will not be evaluatable without prediction!""")
+Strategy: {possible_opponent_strategy.get('possible_other_player_strategy', 'Unknown')}
+Ready for behavioral evaluation!""")
         
         # Validate hypothesis has required fields before storing
         stored_hypothesis = self.opponent_hypotheses[self.interaction_num]
@@ -1421,12 +1440,44 @@ Status: {'Ready for evaluation' if has_prediction else 'Missing prediction - wil
                                 pass
                         continue
                         
-            # If no JSON found, try to extract key-value pairs from text
-            response_str = str(response)
+            # SMART FALLBACK: Extract semantic meaning from natural language
+            # Look for common patterns that indicate True/False for evaluate_predicted_behavior
             self.hm_logger.print_style_log('warning', f"""=== EXTRACT DICT FALLBACK ===
 Trader: {self.tid}
-Could not find JSON in response, using fallback parsing
+Could not find JSON in response, using semantic fallback parsing
 Response: {response_str[:200]}...""")
+            
+            response_lower = response_str.lower()
+            
+            # Check if this is an evaluation response (contains evaluate_predicted_behavior context)
+            if 'evaluate_predicted_behavior' in response_str or 'aligns' in response_lower or 'matches' in response_lower:
+                # Extract boolean value from natural language
+                if any(word in response_lower for word in ['yes', 'true', 'correct', 'aligns', 'matches', 'agrees', 'supports', 'confirms', 'validates']):
+                    self.hm_logger.print_style_log('info', f"""=== SEMANTIC FALLBACK SUCCESS ===
+Trader: {self.tid}
+Extracted True from natural language response
+Response indicators: {[word for word in ['yes', 'true', 'correct', 'aligns', 'matches', 'agrees', 'supports', 'confirms', 'validates'] if word in response_lower]}""")
+                    return {'evaluate_predicted_behavior': True}
+                elif any(word in response_lower for word in ['no', 'false', 'incorrect', 'doesnt align', 'doesnt match', 'disagrees', 'contradicts', 'refutes']):
+                    self.hm_logger.print_style_log('info', f"""=== SEMANTIC FALLBACK SUCCESS ===
+Trader: {self.tid}
+Extracted False from natural language response
+Response indicators: {[word for word in ['no', 'false', 'incorrect', 'doesnt align', 'doesnt match', 'disagrees', 'contradicts', 'refutes'] if word in response_lower]}""")
+                    return {'evaluate_predicted_behavior': False}
+                else:
+                    # Ambiguous response - try to infer from context
+                    if 'aligns' in response_lower or 'matches' in response_lower or 'supports' in response_lower:
+                        self.hm_logger.print_style_log('info', f"""=== SEMANTIC FALLBACK INFERENCE ===
+Trader: {self.tid}
+Inferred True from context (alignment/support language)
+Response: {response_str[:100]}...""")
+                        return {'evaluate_predicted_behavior': True}
+                    else:
+                        self.hm_logger.print_style_log('warning', f"""=== SEMANTIC FALLBACK AMBIGUOUS ===
+Trader: {self.tid}
+Could not determine boolean value from natural language
+Response: {response_str[:200]}...""")
+                        raise ValueError(f"Ambiguous natural language response - cannot determine evaluate_predicted_behavior value")
             
             # No more fallbacks - if JSON parsing fails, raise clear error
             raise ValueError(f"Could not extract valid JSON from LLM response: {response_str[:300]}...")
