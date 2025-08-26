@@ -91,7 +91,7 @@ Time: {time}""")
         self.alpha = 0.6  # learning rate for updating hypothesis values (increased for faster learning)
         self.correct_guess_reward = 1
         self.good_hypothesis_thr = 0.3  # lowered threshold for more realistic hypothesis acceptance
-        self.top_k = 5  # number of top hypotheses to evaluate
+        self.top_k = 3  # number of top hypotheses to evaluate (same as Hypothetical-Minds)
         self.self_improve = config.get('self_improve', True)
         
         # BSE-specific memory entities (adapted from HM entity types)
@@ -621,26 +621,39 @@ Available hypotheses: {len(self.opponent_hypotheses)}""")
             'good_hypothesis_found': self.good_hypothesis_found
         }
         
-        # Generate new hypothesis if no good one exists
+        # Use vanilla LLM if no good hypotheses exist - SIMPLE APPROACH
         if not self.good_hypothesis_found:
-            self.hm_logger.print_style_log('info', f"""=== NEW HYPOTHESIS PATH ===
+            self.hm_logger.print_style_log('info', f"""=== VANILLA LLM PATH ===
 Trader: {self.tid}
 Reason: No good hypothesis found (threshold: {self.good_hypothesis_thr})
-Will generate new opponent strategy hypothesis""")
+Available hypotheses: {len(self.opponent_hypotheses)} (all below threshold)
+Strategy: Use simple vanilla LLM without hypothesis complexity""")
             
-            # EXACT HM PATTERN: Create new hypothesis when no good ones exist
-            self.hm_logger.print_style_log('info', f"""=== CREATING NEW HYPOTHESIS ON DEMAND ===
+            # SIMPLE VANILLA LLM APPROACH - no hypothesis creation, just basic market analysis
+            import time as time_module
+            start_time = time_module.time()
+            
+            vanilla_prompt = self.generate_vanilla_order_prompt(lob, time, countdown)
+            responses = await self.controller.async_batch_prompt(self.system_message, [vanilla_prompt])
+            raw_response = responses[0][0] if isinstance(responses[0], list) else responses[0]
+            vanilla_strategy = self.extract_dict(raw_response)
+            
+            end_time = time_module.time()
+            latency = (end_time - start_time) * 1000
+            
+            self.hm_logger.print_style_log('debug', f"""=== LLM INTERACTION: VanillaOrder ===
 Trader: {self.tid}
-Available hypotheses: {len(self.opponent_hypotheses)}
-Good hypothesis threshold: {self.good_hypothesis_thr}
-No good hypotheses exist - generating new one based on recent market activity
-Following exact HM pattern: create and use new hypothesis immediately""")
+Latency: {latency:.2f}ms
+Prompt Preview: {vanilla_prompt[:300]}...
+Response: {str(vanilla_strategy)}""")
             
-            # Generate new hypothesis using same logic from respond phase
-            await self._create_hypothesis_from_recent_activity(time)
+            self.hm_logger.print_style_log('info', f"""=== VANILLA ORDER DECISION ===
+Trader: {self.tid}
+Price: {vanilla_strategy.get('my_next_quote_price')}
+Reasoning: {vanilla_strategy.get('reasoning', 'No reasoning provided')[:200]}...
+Strategy: Simple market analysis without hypothesis complexity""")
             
-            # Now use the newly created hypothesis for strategic decision
-            return await self._strategic_planning_with_hypotheses(lob, time, countdown)
+            return vanilla_strategy
             
 #             import time as time_module
 #             start_time = time_module.time()
@@ -667,76 +680,37 @@ Following exact HM pattern: create and use new hypothesis immediately""")
 #             return my_strategy
         
         else:
-            # Use best existing hypothesis for strategic planning
-            self.hm_logger.print_style_log('info', f"""=== BEST HYPOTHESIS PATH ===
+            # NEW APPROACH: Use ALL good hypotheses together using EXACT SAME filtering pattern
+            self.hm_logger.print_style_log('info', f"""=== ALL GOOD HYPOTHESES PATH ===
 Trader: {self.tid}
-Using best existing hypothesis from {len(self.opponent_hypotheses)} total
-Good hypothesis threshold: {self.good_hypothesis_thr}""")
-            
-            sorted_keys = sorted([key for key in self.opponent_hypotheses], 
-                               key=lambda x: self.opponent_hypotheses[x]['value'], reverse=True)
-            best_key = sorted_keys[0]
-            
-            # Ensure hypothesis meets threshold
-            best_value = self.opponent_hypotheses[best_key]['value']
-            assert best_value > self.good_hypothesis_thr, f"Best hypothesis value {best_value} below threshold {self.good_hypothesis_thr}"
-            
-            best_hypothesis = self.opponent_hypotheses[best_key]
-            self.hm_logger.print_style_log('info', f"""=== BEST HYPOTHESIS SELECTED ===
-Trader: {self.tid}
-Key: {best_key}
-Value: {best_value:.4f}
-Strategy: {best_hypothesis.get('possible_other_player_strategy', 'Unknown strategy')}
-Meets Threshold: {best_value > self.good_hypothesis_thr} (>{self.good_hypothesis_thr})""")
-            
-            # Predict opponent next action using best hypothesis
-            self.hm_logger.print_style_log('debug', f"""=== BEST MESSAGE 3: Predict With Best Hypothesis ===
-Trader: {self.tid}
-Using best hypothesis for prediction
-Hypothesis Value: {best_value:.4f}
-Strategy: {best_hypothesis.get('possible_other_player_strategy', 'Unknown')}""")
+Using ALL good hypotheses from {len(self.opponent_hypotheses)} total
+Good hypothesis threshold: {self.good_hypothesis_thr}
+Strategy: Feed ALL proven opponent models + market data to LLM""")
             
             import time as time_module
             start_time = time_module.time()
-            hls_user_msg3 = self.generate_interaction_feedback_user_message3(time, best_hypothesis)
-            responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg3])
-            other_player_next_action = responses[0]  # Already structured dict
+            
+            # Generate strategic prompt with ALL good hypotheses + market data
+            strategic_prompt = self.generate_strategic_order_with_all_good_hypotheses(lob, time, countdown)
+            responses = await self.controller.async_batch_prompt(self.system_message, [strategic_prompt])
+            raw_response = responses[0][0] if isinstance(responses[0], list) else responses[0]
+            my_next_strategy = self.extract_dict(raw_response)
+            
             end_time = time_module.time()
             latency = (end_time - start_time) * 1000
             
-            self.hm_logger.print_style_log('debug', f"""=== LLM INTERACTION: BestMessage3 ===
+            self.hm_logger.print_style_log('debug', f"""=== LLM INTERACTION: AllGoodHypotheses ===
 Trader: {self.tid}
 Latency: {latency:.2f}ms
-Prompt: {hls_user_msg3}
-Response: {str(other_player_next_action)}""")
-            
-            # Update best hypothesis
-            self.opponent_hypotheses[best_key]['other_player_next_action'] = other_player_next_action
-            
-            # Generate my strategic response based on best hypothesis
-            self.hm_logger.print_style_log('debug', f"""=== BEST MESSAGE 4: Strategic Response ===
-Trader: {self.tid}
-Generating strategic response with best hypothesis
-Hypothesis Value: {best_value:.4f}
-Opponent Prediction: {other_player_next_action.get('predicted_other_trader_next_price', 'Unknown')}""")
-            
-            start_time = time_module.time()
-            hls_user_msg4 = self.generate_interaction_feedback_user_message4(time, best_hypothesis)
-            responses = await self.controller.async_batch_prompt(self.system_message, [hls_user_msg4])
-            my_next_strategy = responses[0]  # Already structured dict
-            end_time = time_module.time()
-            latency = (end_time - start_time) * 1000
-            
-            self.hm_logger.print_style_log('debug', f"""=== LLM INTERACTION: BestMessage4 ===
-Trader: {self.tid}
-Latency: {latency:.2f}ms
-Prompt: {hls_user_msg4}
+Prompt Preview: {strategic_prompt[:500]}...
 Response: {str(my_next_strategy)}""")
-            self.hm_logger.print_style_log('info', f"""=== BEST HYPOTHESIS DECISION ===
+            
+            self.hm_logger.print_style_log('info', f"""=== ALL HYPOTHESES DECISION ===
 Trader: {self.tid}
 Price: {my_next_strategy.get('my_next_quote_price')}
 Reasoning: {my_next_strategy.get('reasoning', 'No reasoning provided')[:200]}...
-Used Hypothesis: {best_key} (value: {best_value:.4f})""")
+Used Hypotheses: {my_next_strategy.get('used_hypotheses', [])}
+Strategy: Used ALL good hypotheses with EXACT SAME filtering as evaluation!""")
             
             return my_next_strategy
 
@@ -816,6 +790,7 @@ Used Hypothesis: {best_key} (value: {best_value:.4f})""")
             Recent market: {recent_trades}
             
             Does their actual trading behavior align with our hypothesis?
+            Answer with a simple Yes or No, followed by brief reasoning.
             
             ```python
             {{
@@ -1392,6 +1367,231 @@ Has Prediction: {has_prediction}
 Total Hypotheses: {len(self.opponent_hypotheses)}
 Status: {'Ready for evaluation' if has_prediction else 'Missing prediction - will be skipped in evaluation'}""")
     
+    def gather_all_good_hypotheses(self) -> Dict[str, Any]:
+        """
+        EXACT SAME PATTERN as evaluation filtering - gather all good hypotheses
+        
+        Uses the same proven logic from evaluate_opponent_hypotheses() to collect
+        all hypotheses with value > threshold, grouped by target trader.
+        """
+        # Filter all hypotheses that meet the good threshold - EXACT SAME PATTERN
+        good_hypotheses_by_trader = {}
+        
+        for key, hypothesis in self.opponent_hypotheses.items():
+            if hypothesis.get('value', 0) > self.good_hypothesis_thr:
+                target_trader_id = hypothesis.get('target_trader_id')
+                if target_trader_id:
+                    if target_trader_id not in good_hypotheses_by_trader:
+                        good_hypotheses_by_trader[target_trader_id] = []
+                    
+                    good_hypotheses_by_trader[target_trader_id].append({
+                        'key': key,
+                        'value': hypothesis.get('value', 0),
+                        'strategy': hypothesis.get('possible_other_player_strategy', 'Unknown'),
+                        'target_trader': target_trader_id,
+                        'prediction': hypothesis.get('other_player_next_action', {})
+                    })
+        
+        # Sort each trader's hypotheses by value (best first) - SAME PATTERN as evaluation
+        for trader_id in good_hypotheses_by_trader:
+            good_hypotheses_by_trader[trader_id].sort(key=lambda x: x['value'], reverse=True)
+        
+        total_good_count = sum(len(hypotheses) for hypotheses in good_hypotheses_by_trader.values())
+        
+        self.hm_logger.print_style_log('info', f"""=== GOOD HYPOTHESES GATHERED ===
+Trader: {self.tid}
+Total Good Hypotheses: {total_good_count}
+By Trader: {[(trader_id, len(hypotheses)) for trader_id, hypotheses in good_hypotheses_by_trader.items()]}
+Threshold: {self.good_hypothesis_thr}
+Using EXACT SAME filtering pattern as evaluation!""")
+        
+        return good_hypotheses_by_trader
+
+    def generate_strategic_order_with_all_good_hypotheses(self, lob: Dict[str, Any], time: float, countdown: float):
+        """
+        Generate order using ALL good hypotheses + market data
+        
+        Feeds comprehensive context to LLM: all proven opponent models + market state
+        """
+        # Gather all good hypotheses using EXACT SAME pattern as evaluation
+        good_hypotheses_by_trader = self.gather_all_good_hypotheses()
+        
+        # COMPREHENSIVE DEBUG LOGGING - verify we have all good hypotheses + market data
+        self.hm_logger.print_style_log('info', f"""=== ORDER CREATION DEBUG - COMPLETE CONTEXT ===
+Trader: {self.tid}
+Time: {time}, Countdown: {countdown}
+
+=== ALL GOOD HYPOTHESES DETAILS ===
+Total Good Hypotheses Found: {sum(len(hypotheses) for hypotheses in good_hypotheses_by_trader.values())}
+Good Hypotheses By Trader: {good_hypotheses_by_trader}
+
+=== DETAILED HYPOTHESIS BREAKDOWN ===""")
+        
+        for trader_id, hypotheses in good_hypotheses_by_trader.items():
+            for i, hyp in enumerate(hypotheses):
+                self.hm_logger.print_style_log('info', f"""Hypothesis {i+1} for {trader_id}:
+  Key: {hyp['key']}, Value: {hyp['value']:.4f}
+  Strategy: {hyp['strategy'][:150]}...
+  Prediction: {hyp['prediction']}""")
+        
+        if not good_hypotheses_by_trader:
+            self.hm_logger.print_style_log('warning', f"""=== NO GOOD HYPOTHESES AVAILABLE ===
+Trader: {self.tid}
+All Hypotheses: {len(self.opponent_hypotheses)}
+Threshold: {self.good_hypothesis_thr}
+Values: {[(k, v.get('value', 0)) for k, v in self.opponent_hypotheses.items()]}
+Need more market learning before strategic order creation!""")
+            return "No good hypotheses available - need more market learning"
+            
+        # Format market data comprehensively 
+        market_context = {
+            'time': time,
+            'countdown': countdown,
+            'best_bid': lob.get('bids', {}).get('best', 'None'),
+            'best_ask': lob.get('asks', {}).get('best', 'None'),
+            'spread': None,
+            'recent_trades': lob.get('tape', [])[-10:] if lob.get('tape') else [],
+            'your_balance': self.balance,
+            'pending_orders': len(self.orders)
+        }
+        
+        if market_context['best_bid'] != 'None' and market_context['best_ask'] != 'None':
+            market_context['spread'] = market_context['best_ask'] - market_context['best_bid']
+            
+        # Format interaction history context
+        recent_interactions = self.interaction_history[-5:] if self.interaction_history else []
+        
+        # COMPREHENSIVE MARKET DEBUG LOGGING - verify complete market background
+        self.hm_logger.print_style_log('info', f"""=== COMPLETE MARKET BACKGROUND ===
+Current Market State:
+  Time: {market_context['time']:.3f}
+  Countdown: {market_context['countdown']:.3f}
+  Best Bid: {market_context['best_bid']}
+  Best Ask: {market_context['best_ask']}
+  Spread: {market_context['spread']}
+  Recent Trades Count: {len(market_context['recent_trades'])}
+  Recent Trades: {market_context['recent_trades']}
+  
+Your Trading State:
+  Balance: {market_context['your_balance']}
+  Pending Orders: {market_context['pending_orders']}
+  Total Interactions: {len(self.interaction_history)}
+  
+Recent Interaction History:
+{recent_interactions}
+
+=== READY FOR STRATEGIC ORDER CREATION ===
+Context Complete: ✅ Good Hypotheses + ✅ Market Data + ✅ Trading History""")
+        
+        if len(recent_interactions) == 0:
+            self.hm_logger.print_style_log('info', f"""=== FIRST STRATEGIC ORDER ===
+Trader: {self.tid}
+This is first order with good hypotheses - no prior interaction history yet
+Will use pure hypothesis-driven strategy with market data""")
+        else:
+            self.hm_logger.print_style_log('info', f"""=== EXPERIENCE-BASED STRATEGIC ORDER ===
+Trader: {self.tid}
+Using {len(recent_interactions)} recent interactions + good hypotheses + market data
+Full strategic context available for optimal order creation""")   
+        
+        user_message = f"""
+        STRATEGIC ORDER DECISION WITH ALL PROVEN OPPONENT MODELS
+        
+        === COMPREHENSIVE MARKET CONTEXT ===
+        {market_context}
+        
+        === ALL GOOD HYPOTHESES (Value > {self.good_hypothesis_thr}) ===
+        {good_hypotheses_by_trader}
+        
+        === RECENT MARKET INTERACTIONS ===
+        {recent_interactions}
+        
+        TASK: Generate optimal order price using ALL proven opponent models and current market state.
+        
+        Strategic Considerations:
+        - You have proven models of multiple opponent strategies
+        - Consider all opponent predictions and market momentum
+        - Balance aggressive vs conservative pricing
+        - Account for time pressure (countdown: {countdown})
+        - Price range: 1-500
+        
+        ABSOLUTELY CRITICAL - SYSTEM WILL CRASH IF NOT FOLLOWED:
+        - You MUST respond with ONLY the JSON format below
+        - NO explanations, NO additional text, NO markdown formatting  
+        - ONLY the JSON block with ```json markers
+        - Any other text will cause immediate system failure
+
+        ```json
+        {{
+          "my_next_quote_price": 160,
+          "reasoning": "Strategic reasoning using all opponent models and market data",
+          "confidence": 0.8,
+          "used_hypotheses": ["List of key opponent insights used"]
+        }}
+        ```
+        """
+        
+        return user_message
+
+    def generate_vanilla_order_prompt(self, lob: Dict[str, Any], time: float, countdown: float):
+        """
+        VANILLA LLM: Simple market analysis prompt when no good hypotheses exist
+        
+        No hypothesis complexity - just basic market data + trading decision
+        """
+        # Basic market context
+        market_info = {
+            'time': time,
+            'countdown': countdown,
+            'best_bid': lob.get('bids', {}).get('best', 'None'),
+            'best_ask': lob.get('asks', {}).get('best', 'None'),
+            'recent_trades': lob.get('tape', [])[-5:] if lob.get('tape') else [],
+            'balance': self.balance,
+            'orders': len(self.orders)
+        }
+        
+        if market_info['best_bid'] != 'None' and market_info['best_ask'] != 'None':
+            market_info['spread'] = market_info['best_ask'] - market_info['best_bid']
+        else:
+            market_info['spread'] = 'Wide'
+            
+        user_message = f"""
+        SIMPLE TRADING DECISION - Basic Market Analysis
+        
+        === CURRENT MARKET STATE ===
+        Time: {market_info['time']:.2f}, Countdown: {market_info['countdown']:.2f}
+        Best Bid: {market_info['best_bid']}
+        Best Ask: {market_info['best_ask']}  
+        Spread: {market_info['spread']}
+        Recent Trades: {market_info['recent_trades']}
+        Your Balance: {market_info['balance']}
+        
+        TASK: Make a simple trading decision based on current market conditions.
+        
+        Consider:
+        - Current bid-ask spread and market momentum
+        - Recent trade prices and patterns  
+        - Time pressure (countdown remaining)
+        - Basic profit opportunity vs risk
+        - Price range: 1-500
+        
+        ABSOLUTELY CRITICAL - SYSTEM WILL CRASH IF NOT FOLLOWED:
+        - You MUST respond with ONLY the JSON format below
+        - NO explanations, NO additional text, NO markdown formatting
+        - ONLY the JSON block with ```json markers
+        - Any other text will cause immediate system failure
+
+        ```json
+        {{
+          "my_next_quote_price": 160,
+          "reasoning": "Simple market analysis reasoning",
+          "confidence": 0.7
+        }}
+        ```
+        """
+        
+        return user_message
+
     def extract_dict(self, response):
         """
         Extract JSON dictionary from LLM response text
@@ -1449,20 +1649,62 @@ Response: {response_str[:200]}...""")
             
             response_lower = response_str.lower()
             
-            # Check if this is an evaluation response (contains evaluate_predicted_behavior context)
-            if 'evaluate_predicted_behavior' in response_str or 'aligns' in response_lower or 'matches' in response_lower:
-                # Extract boolean value from natural language
-                if any(word in response_lower for word in ['yes', 'true', 'correct', 'aligns', 'matches', 'agrees', 'supports', 'confirms', 'validates']):
+            # Check if this is an evaluation response (contains evaluate_predicted_behavior context)  
+            self.hm_logger.print_style_log('debug', f"""=== SEMANTIC FALLBACK DEBUG ===
+Trader: {self.tid}
+Checking conditions: evaluate_predicted_behavior={('evaluate_predicted_behavior' in response_str)}, aligns={('aligns' in response_lower)}, matches={('matches' in response_lower)}
+Response lower: {response_lower[:100]}...""")
+            
+            if ('evaluate_predicted_behavior' in response_str or 
+                'aligns' in response_lower or 'matches' in response_lower or
+                'hypothesis' in response_lower or 'behavior' in response_lower or
+                response_lower.startswith('yes') or response_lower.startswith('no')):
+                # IMPROVED: Check for contradictory language first
+                positive_words = ['yes', 'true', 'correct', 'aligns', 'matches', 'agrees', 'supports', 'confirms', 'validates']
+                negative_words = ['no', 'false', 'incorrect', 'doesnt align', 'doesnt match', 'disagrees', 'contradicts', 'refutes', 'is not', 'not a']
+                
+                positive_found = [word for word in positive_words if word in response_lower]
+                negative_found = [word for word in negative_words if word in response_lower]
+                
+                self.hm_logger.print_style_log('debug', f"""=== SEMANTIC ANALYSIS ===
+Trader: {self.tid}
+Positive found: {positive_found}
+Negative found: {negative_found}
+Response starts with yes: {response_lower.startswith('yes')}""")
+                
+                # Handle contradictory responses
+                if positive_found and negative_found:
+                    # Check which sentiment is stronger - look at sentence structure
+                    if response_lower.startswith('yes') and ('however' in response_lower or 'but' in response_lower or 'is not' in response_lower):
+                        # "Yes... however/but... is not" pattern - actually False
+                        self.hm_logger.print_style_log('info', f"""=== SEMANTIC FALLBACK: CONTRADICTION RESOLVED ===
+Trader: {self.tid}
+Found contradictory language: Positive {positive_found}, Negative {negative_found}
+Pattern: 'Yes... but/however... is not' → Extracting False
+Response: {response_str[:150]}...""")
+                        return {'evaluate_predicted_behavior': False}
+                    else:
+                        # Default to positive if starts positive
+                        self.hm_logger.print_style_log('info', f"""=== SEMANTIC FALLBACK: CONTRADICTION DEFAULT ===
+Trader: {self.tid}
+Found contradictory language: Positive {positive_found}, Negative {negative_found}
+Defaulting to primary sentiment: {positive_found[0] if positive_found else 'none'}""")
+                        return {'evaluate_predicted_behavior': True}
+                
+                # Clear positive signals
+                elif positive_found:
                     self.hm_logger.print_style_log('info', f"""=== SEMANTIC FALLBACK SUCCESS ===
 Trader: {self.tid}
 Extracted True from natural language response
-Response indicators: {[word for word in ['yes', 'true', 'correct', 'aligns', 'matches', 'agrees', 'supports', 'confirms', 'validates'] if word in response_lower]}""")
+Response indicators: {positive_found}""")
                     return {'evaluate_predicted_behavior': True}
-                elif any(word in response_lower for word in ['no', 'false', 'incorrect', 'doesnt align', 'doesnt match', 'disagrees', 'contradicts', 'refutes']):
+                
+                # Clear negative signals  
+                elif negative_found:
                     self.hm_logger.print_style_log('info', f"""=== SEMANTIC FALLBACK SUCCESS ===
 Trader: {self.tid}
 Extracted False from natural language response
-Response indicators: {[word for word in ['no', 'false', 'incorrect', 'doesnt align', 'doesnt match', 'disagrees', 'contradicts', 'refutes'] if word in response_lower]}""")
+Response indicators: {negative_found}""")
                     return {'evaluate_predicted_behavior': False}
                 else:
                     # Ambiguous response - try to infer from context
