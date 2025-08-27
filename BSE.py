@@ -2617,7 +2617,8 @@ class TraderLLMProp(Trader):
             trader_info = "RECENT TRADER ACTIVITY:\n"
             for trader_id, activity in trader_activity.items():
                 if trader_id != self.tid:  # Don't show our own activity
-                    trader_info += f"Trader {trader_id}: {activity['trades']} trades, avg price ${activity['avg_price']:.1f}\n"
+                    avg_price_str = f"${activity['avg_price']:.1f}" if activity['avg_price'] is not None else "N/A"
+                trader_info += f"Trader {trader_id}: {activity['trades']} trades, avg price {avg_price_str}\n"
         
         # Clear state reporting
         context = f"""MARKET DATA:
@@ -3062,6 +3063,678 @@ No explanation needed."""
             'recent_trades': recent_trades
         }
 
+# Belief Graph Trader Class
+class TraderBeliefGraph(Trader):
+    """
+    LLM-based proprietary trader that uses an explicit belief graph for state management,
+    utility inference, and decision making. This trader maintains a structured representation
+    of other agents' behaviors and market state to make more informed trading decisions.
+    """
+
+    def __init__(self, ttype, tid, balance, params, time):
+        """
+        Initialize the Belief Graph trader
+        :param ttype: the trader type
+        :param tid: the trader I.D.
+        :param balance: starting balance
+        :param params: parameters including API key and belief graph configuration
+        :param time: current time
+        """
+        Trader.__init__(self, ttype, tid, balance, params, time)
+        
+        # Import belief graph components
+        try:
+            from belief_graph import BeliefGraph, MarketEvent, EventType
+            self.belief_graph = BeliefGraph(asset_id="BSE_ASSET")
+            self.MarketEvent = MarketEvent
+            self.EventType = EventType
+        except ImportError:
+            print(f"Warning: belief_graph module not found for trader {tid}")
+            self.belief_graph = None
+            self.MarketEvent = None
+            self.EventType = None
+        
+        # LLM configuration (same as LLM trader for fair comparison)
+        self.api_key = None
+        self.model_name = 'gemini-2.0-flash-lite'
+        self.temperature = 0.3  # Same as LLM trader
+        self.max_tokens = 500   # Same as LLM trader
+        
+        # Parse LLM parameters if provided
+        if params is not None:
+            if 'api_key' in params:
+                self.api_key = params['api_key']
+            if 'model_name' in params:
+                self.model_name = params['model_name']
+            if 'temperature' in params:
+                self.temperature = params['temperature']
+        
+        # Get API key from environment if not provided
+        if not self.api_key:
+            self.api_key = os.getenv('GOOGLE_API_KEY')
+        
+        # Initialize the LLM
+        if self.api_key:
+            genai.configure(api_key=self.api_key)
+            self.model = genai.GenerativeModel(self.model_name)
+            print(f"Initialized Belief Graph trader {tid} with model {self.model_name}")
+        else:
+            print(f"Warning: No API key provided for Belief Graph trader {tid}")
+            self.model = None
+        
+        # Trading state (same as LLM trader)
+        self.job = 'Buy'  # flag switches between 'Buy' & 'Sell'
+        self.last_purchase_price = None
+        self.inventory = 0
+        
+        # Belief graph tracking (ONLY advantage over LLM trader)
+        self.known_agents = set()
+        self.last_market_update = 0.0
+        self.belief_update_interval = 1.0  # Update beliefs every second
+        
+        # Trading history for context (same as LLM trader)
+        self.trading_history = []
+        self.max_history = 20  # Same as LLM trader
+        
+        # Performance tracking (same as LLM trader)
+        self.total_profit = 0.0
+        self.successful_trades = 0
+        self.failed_trades = 0
+        
+        # Default trading parameters (same as LLM trader)
+        self.n_past_trades = 5      # how many recent trades to analyze
+        self.min_profit_margin = 5  # minimum profit we want when selling
+        
+        if params is not None:
+            if 'n_past_trades' in params:
+                self.n_past_trades = params['n_past_trades']
+            if 'min_profit_margin' in params:
+                self.min_profit_margin = params['min_profit_margin']
+        
+        # Debug mode
+        self.debug_mode = False
+
+    def _update_belief_graph_from_market(self, lob, time):
+        """
+        Update the belief graph with current market events
+        """
+        if not self.belief_graph:
+            return
+        
+        # Add ourselves to the belief graph if not already present
+        if self.tid not in self.known_agents:
+            self.belief_graph.add_agent(self.tid)
+            self.known_agents.add(self.tid)
+        
+        # Process recent market events from the tape
+        if 'tape' in lob and lob['tape']:
+            for event in lob['tape'][-10:]:  # Process last 10 events
+                if event['time'] > self.last_market_update:
+                    self._process_market_event(event, time)
+        
+        self.last_market_update = time
+
+    def _process_market_event(self, event, time):
+        """
+        Process a market event and update the belief graph
+        """
+        if not self.belief_graph:
+            return
+        
+        # Determine event type
+        if event['type'] == 'Trade':
+            event_type = self.EventType.TRADE
+        elif event['type'] == 'Bid':
+            event_type = self.EventType.BID
+        elif event['type'] == 'Ask':
+            event_type = self.EventType.ASK
+        else:
+            return  # Skip other event types
+        
+        # Create market event for belief graph
+        market_event = self.MarketEvent(
+            event_id=str(uuid.uuid4()),
+            event_type=event_type,
+            timestamp=event.get('time', time),
+            agent_id=event.get('party1') or event.get('agent'),
+            price=event.get('price'),
+            quantity=event.get('qty', 1),
+            counterparty_id=event.get('party2')
+        )
+        
+        # Update belief graph
+        self.belief_graph.update_beliefs(market_event)
+
+    def _get_belief_graph_context(self, lob, time):
+        """
+        Get the belief graph context for LLM decision making
+        """
+        if not self.belief_graph:
+            return {"error": "Belief graph not available"}
+        
+        # Update belief graph with current market state
+        self._update_belief_graph_from_market(lob, time)
+        
+        # Get current market state
+        last_trade_price = None
+        if 'tape' in lob and lob['tape']:
+            try:
+                last_event = lob['tape'][-1]
+                if 'price' in last_event:
+                    last_trade_price = last_event['price']
+            except (IndexError, KeyError):
+                pass
+        
+        current_market_state = {
+            'best_bid': lob['bids']['best'] if lob['bids']['n'] > 0 else None,
+            'best_ask': lob['asks']['best'] if lob['asks']['n'] > 0 else None,
+            'last_trade': last_trade_price
+        }
+        
+        # Query belief graph for decision context
+        belief_context = self.belief_graph.query_action(self.tid, current_market_state)
+        
+        return belief_context
+
+    def _format_belief_graph_prompt(self, belief_context, lob, time):
+        """
+        Format the belief graph data into a comprehensive prompt for the LLM
+        """
+        # Check if belief graph is available
+        if isinstance(belief_context, dict) and 'error' in belief_context:
+            # Fallback to basic prompt without belief graph
+            return self._format_basic_prompt(lob, time)
+        
+        # Extract key information from belief context
+        agents_info = belief_context.get('agents', {})
+        strategic_insights = belief_context.get('strategic_insights', {})
+        asset_state = belief_context.get('asset_state', {})
+        
+        # Format competitor analysis
+        competitors_text = ""
+        if strategic_insights.get('competitors'):
+            competitors_text = "COMPETITOR ANALYSIS:\n"
+            for comp in strategic_insights['competitors']:
+                if comp['agent_id'] != self.tid:
+                    valuation_str = f"${comp['valuation_estimate']:.1f}" if comp['valuation_estimate'] is not None else "Unknown"
+                    competitors_text += f"- {comp['agent_id']}: Strategy={comp['strategy']}, "
+                    competitors_text += f"Aggressiveness={comp['aggressiveness']:.2f}, "
+                    competitors_text += f"Valuation≈{valuation_str} "
+                    competitors_text += f"(confidence: {comp['confidence']:.2f})\n"
+        
+        # Format market opportunities
+        opportunities_text = ""
+        if strategic_insights.get('market_opportunities'):
+            opportunities_text = "MARKET OPPORTUNITIES:\n"
+            for opp in strategic_insights['market_opportunities']:
+                opportunities_text += f"- {opp['description']}\n"
+        
+        # Format risk factors
+        risks_text = ""
+        if strategic_insights.get('risk_factors'):
+            risks_text = "RISK FACTORS:\n"
+            for risk in strategic_insights['risk_factors']:
+                risks_text += f"- {risk['description']}\n"
+        
+        # Current market state
+        best_bid = lob['bids']['best'] if lob['bids']['n'] > 0 else None
+        best_ask = lob['asks']['best'] if lob['asks']['n'] > 0 else None
+        spread = (best_ask - best_bid) if (best_bid and best_ask) else None
+        
+        # Recent price history
+        recent_prices = []
+        if 'tape' in lob and lob['tape']:
+            for event in lob['tape'][-5:]:
+                if event['type'] == 'Trade':
+                    recent_prices.append(event['price'])
+        
+        avg_price = sum(recent_prices) / len(recent_prices) if recent_prices else None
+        avg_price_str = f"{avg_price:.1f}" if avg_price is not None else "N/A"
+        
+        if self.job == 'Buy':
+            prompt = f"""You are a sophisticated proprietary trader using a belief graph to model other agents' behaviors and market dynamics.
+
+CURRENT SITUATION: You have ${self.balance} and are looking to BUY a unit. You have NO INVENTORY.
+
+MARKET STATE:
+- Best Bid: ${best_bid}
+- Best Ask: ${best_ask}
+- Spread: ${spread}
+- Recent Prices: {recent_prices}
+- Average Recent Price: {avg_price_str}
+
+{competitors_text}
+{opportunities_text}
+{risks_text}
+
+YOUR PERFORMANCE:
+- Total Profit: ${self.total_profit:.2f}
+- Successful Trades: {self.successful_trades}
+- Failed Trades: {self.failed_trades}
+- Current Balance: ${self.balance}
+
+MARKET EDUCATION:
+- Price ranges typically between $1-$500 in this market
+- Recent average price: {avg_price_str}
+- You started with $500 - consider how your current balance reflects your trading performance
+- You MUST make a profit. Your goal is to end with MORE money than you started with.
+- Successful prop traders typically aim for small, consistent profits rather than big gambles
+
+TRADER ANALYSIS:
+- Pay attention to which other traders are active and their average prices
+- Analyze their trading patterns and use this information to inform your decisions
+- Consider what their activity might indicate about market conditions
+
+HOW ORDER BOOKS WORK:
+- To BUY: Place a BID order at your desired price
+- If sellers exist at/below your bid price → immediate execution
+- If no sellers at your price → your bid waits on the order book for sellers
+- Higher bids are more likely to execute quickly
+
+TRADING PRINCIPLES TO CONSIDER:
+- "Buy low, sell high" means buying below recent average prices when possible
+- Risk management: avoid spending your entire balance on one trade
+- Learn from history: if recent trades lost money, consider what went wrong
+- Liquidity: sometimes waiting for better prices is smarter than forcing trades
+- Trader behavior: analyze other traders' activity and draw your own conclusions
+
+BELIEF GRAPH INSIGHTS:
+- You maintain a structured model of other agents' strategies and valuations
+- Use this information to anticipate market movements and competitor actions
+- Consider which agents are most likely to undercut your bids or accept your offers
+
+STRATEGIC CONSIDERATIONS:
+- Analyze competitor aggressiveness to predict price movements
+- Use valuation estimates to identify mispriced opportunities
+- Consider market opportunities and risk factors in your decision
+- Balance immediate execution vs. waiting for better prices
+
+Respond with ONLY:
+"BUY [exact_price]" - to place a bid at that price
+"WAIT" - to wait for better conditions
+
+No explanation needed."""
+        
+        elif self.job == 'Sell':
+            prompt = f"""You are a sophisticated proprietary trader using a belief graph to model other agents' behaviors and market dynamics.
+
+CURRENT SITUATION: You are holding 1 unit that you bought for ${self.last_purchase_price}. You need to SELL it.
+
+MARKET STATE:
+- Best Bid: ${best_bid}
+- Best Ask: ${best_ask}
+- Spread: ${spread}
+- Recent Prices: {recent_prices}
+- Average Recent Price: {avg_price_str}
+
+{competitors_text}
+{opportunities_text}
+{risks_text}
+
+YOUR PERFORMANCE:
+- Total Profit: ${self.total_profit:.2f}
+- Successful Trades: {self.successful_trades}
+- Failed Trades: {self.failed_trades}
+- Current Balance: ${self.balance}
+
+TRADE ANALYSIS:
+- Purchase Price: ${self.last_purchase_price}
+- Break-even: ${self.last_purchase_price}
+- Minimum Profit Target: ${self.last_purchase_price + 2}
+
+MARKET EDUCATION:
+- Price ranges typically between $1-$500 in this market
+- Recent average price: {avg_price_str}
+- You started with $500 - your current balance shows your trading track record
+- You MUST make a profit. Your goal is to end with MORE money than you started with.
+- Every sale is an opportunity to learn and improve your strategy
+
+TRADER ANALYSIS:
+- Pay attention to which other traders are active and their average prices
+- Analyze their trading patterns and use this information to inform your decisions
+- Consider what their activity might indicate about market demand
+
+HOW ORDER BOOKS WORK:
+- To SELL: Place an ASK order at your desired price
+- If buyers exist at/above your ask price → immediate execution  
+- If no buyers at your price → your ask waits on the order book for buyers
+- Lower asks are more likely to execute quickly
+
+PROFIT/LOSS ANALYSIS:
+- You bought at: ${self.last_purchase_price}
+- Break-even price: ${self.last_purchase_price}
+- To profit: sell above ${self.last_purchase_price}
+- Current best bid: {best_bid} (immediate execution if you ask at/below this)
+
+TRADING PRINCIPLES TO CONSIDER:
+- Profit target: what's a reasonable profit margin for this trade?
+- Risk management: sometimes taking a small loss prevents a bigger loss
+- Market conditions: is the market trending up or down?
+- Patience vs urgency: waiting might get a better price, or price might fall further
+- Learning: what does this trade teach you about timing and pricing?
+- Trader behavior: analyze other traders' activity and draw your own conclusions
+
+BELIEF GRAPH INSIGHTS:
+- Use competitor analysis to predict who might buy at what price
+- Consider agent aggressiveness to time your sale optimally
+- Use valuation estimates to identify the best selling opportunities
+
+STRATEGIC CONSIDERATIONS:
+- Analyze which competitors are most likely to accept your ask price
+- Consider market opportunities and risk factors
+- Balance profit maximization vs. execution certainty
+- Use belief graph insights to optimize timing and pricing
+
+Respond with ONLY:
+"SELL [exact_price]" - to place an ask at that price
+"WAIT" - to wait for better conditions
+
+No explanation needed."""
+        
+        else:
+            return self._fallback_decision()
+        
+        return prompt
+
+    def _format_basic_prompt(self, lob, time):
+        """
+        Format a basic prompt when belief graph is not available
+        """
+        # Current market state
+        best_bid = lob['bids']['best'] if lob['bids']['n'] > 0 else None
+        best_ask = lob['asks']['best'] if lob['asks']['n'] > 0 else None
+        spread = (best_ask - best_bid) if (best_bid and best_ask) else None
+        
+        # Recent price history
+        recent_prices = []
+        if 'tape' in lob and lob['tape']:
+            for event in lob['tape'][-5:]:
+                if event['type'] == 'Trade':
+                    recent_prices.append(event['price'])
+        
+        avg_price = sum(recent_prices) / len(recent_prices) if recent_prices else None
+        avg_price_str = f"{avg_price:.1f}" if avg_price is not None else "N/A"
+        
+        if self.job == 'Buy':
+            return f"""You are a proprietary trader with ${self.balance} trying to make profit by buying low and selling high.
+
+CURRENT SITUATION: You have ${self.balance} and are looking to BUY a unit. You have NO INVENTORY.
+
+MARKET STATE:
+- Best Bid: ${best_bid}
+- Best Ask: ${best_ask}
+- Spread: ${spread}
+- Recent Prices: {recent_prices}
+- Average Recent Price: {avg_price_str}
+
+YOUR PERFORMANCE:
+- Total Profit: ${self.total_profit:.2f}
+- Successful Trades: {self.successful_trades}
+- Failed Trades: {self.failed_trades}
+- Current Balance: ${self.balance}
+
+Respond with ONLY:
+"BUY [exact_price]" - to place a bid at that price
+"WAIT" - to wait for better conditions
+
+No explanation needed."""
+        
+        elif self.job == 'Sell':
+            return f"""You are a proprietary trader trying to make profit by buying low and selling high.
+
+CURRENT SITUATION: You are holding 1 unit that you bought for ${self.last_purchase_price}. You need to SELL it.
+
+MARKET STATE:
+- Best Bid: ${best_bid}
+- Best Ask: ${best_ask}
+- Spread: ${spread}
+- Recent Prices: {recent_prices}
+- Average Recent Price: {avg_price_str}
+
+YOUR PERFORMANCE:
+- Total Profit: ${self.total_profit:.2f}
+- Successful Trades: {self.successful_trades}
+- Failed Trades: {self.failed_trades}
+- Current Balance: ${self.balance}
+
+TRADE ANALYSIS:
+- Purchase Price: ${self.last_purchase_price}
+- Break-even: ${self.last_purchase_price}
+- Minimum Profit Target: ${self.last_purchase_price + 2}
+
+Respond with ONLY:
+"SELL [exact_price]" - to place an ask at that price
+"WAIT" - to wait for better conditions
+
+No explanation needed."""
+        
+        else:
+            return self._fallback_decision()
+
+    def _get_llm_trading_decision(self, prompt):
+        """
+        Get trading decision from LLM using belief graph context
+        """
+        if not self.model:
+            return self._fallback_decision()
+        
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=self.temperature,
+                    max_output_tokens=self.max_tokens
+                )
+            )
+            
+            response_text = response.text.strip()
+            return self._parse_llm_response(response_text)
+            
+        except Exception as e:
+            if self.debug_mode:
+                print(f"LLM API error for Belief Graph trader {self.tid}: {e}")
+            return self._fallback_decision()
+
+    def _parse_llm_response(self, response_text):
+        """
+        Parse LLM response into actionable decision
+        """
+        response_upper = response_text.upper()
+        
+        import re
+        
+        # Check for explicit BUY command with price
+        buy_match = re.search(r'BUY\s+(\d+)', response_upper)
+        if buy_match and self.job == 'Buy':
+            price = int(buy_match.group(1))
+            price = max(1, min(500, price))
+            return {
+                'action': 'BUY',
+                'price': price,
+                'reasoning': response_text
+            }
+        
+        # Check for explicit SELL command with price
+        sell_match = re.search(r'SELL\s+(\d+)', response_upper)
+        if sell_match and self.job == 'Sell':
+            price = int(sell_match.group(1))
+            price = max(1, min(500, price))
+            return {
+                'action': 'SELL',
+                'price': price,
+                'reasoning': response_text
+            }
+        
+        # Default to WAIT
+        return {
+            'action': 'WAIT',
+            'price': None,
+            'reasoning': response_text
+        }
+
+    def _fallback_decision(self):
+        """
+        Simple fallback decision if LLM is unavailable
+        """
+        return {
+            'action': 'WAIT',
+            'price': None,
+            'reasoning': 'LLM unavailable, using fallback wait strategy'
+        }
+
+    def getorder(self, time, countdown, lob):
+        """
+        Return this trader's order when polled in the main market session loop
+        """
+        if countdown < 0:
+            sys.exit('Negative countdown')
+
+        if len(self.orders) < 1 or time < 0.1 * 60:
+            order = None
+        else:
+            # We have an order, execute it
+            quoteprice = self.orders[0].price
+            order = Order(self.tid, self.orders[0].otype, quoteprice, 
+                         self.orders[0].qty, time, lob['QID'])
+            self.lastquote = order
+            return order
+
+        return None
+
+    def respond(self, time, lob, trade, vrbs):
+        """
+        Respond to market events and make trading decisions using belief graph
+        """
+        # Update profit per time
+        self.profitpertime = self.profitpertime_update(time, self.birthtime, self.balance)
+        
+        # Get belief graph context and LLM decision
+        belief_context = self._get_belief_graph_context(lob, time)
+        prompt = self._format_belief_graph_prompt(belief_context, lob, time)
+        decision = self._get_llm_trading_decision(prompt)
+        
+        # Log the decision
+        self.trading_history.append({
+            'time': time,
+            'decision': decision['action'],
+            'reasoning': decision['reasoning'][:100] + "..." if len(decision['reasoning']) > 100 else decision['reasoning']
+        })
+        
+        # Keep history manageable
+        if len(self.trading_history) > self.max_history:
+            self.trading_history = self.trading_history[-self.max_history:]
+
+        # Act on the decision
+        if decision['action'] == 'BUY' and self.job == 'Buy':
+            self._execute_buy_decision(decision, lob, time)
+        elif decision['action'] == 'SELL' and self.job == 'Sell':
+            self._execute_sell_decision(decision, lob, time)
+
+    def _execute_buy_decision(self, decision, lob, time):
+        """
+        Execute a buy decision with LLM-specified price
+        """
+        if lob['asks']['n'] == 0:
+            return  # No asks available
+
+        buy_price = decision['price']
+        if buy_price is None:
+            if self.debug_mode:
+                print(f"Warning: {self.tid} BUY decision has no price, skipping")
+            return
+        
+        # Only safety check: can we afford it?
+        if buy_price <= self.balance:
+            order = Order(self.tid, 'Bid', buy_price, 1, time, lob['QID'])
+            self.orders = [order]
+        elif self.debug_mode:
+            print(f"Warning: {self.tid} cannot afford price {buy_price}, balance is {self.balance}")
+
+    def _execute_sell_decision(self, decision, lob, time):
+        """
+        Execute a sell decision with LLM-specified price
+        """
+        if lob['bids']['n'] == 0:
+            return  # No bids available
+
+        sell_price = decision['price']
+        if sell_price is None:
+            if self.debug_mode:
+                print(f"Warning: {self.tid} SELL decision has no price, skipping")
+            return
+        
+        # Create the order at LLM's chosen price
+        order = Order(self.tid, 'Ask', sell_price, 1, time, lob['QID'])
+        self.orders = [order]
+
+    def bookkeep(self, time, trade, order, vrbs):
+        """
+        Update trader's records after a successful trade
+        """
+        # Standard bookkeeping
+        self.blotter.append(trade)
+        self.blotter = self.blotter[-self.blotter_length:]
+
+        transactionprice = trade['price']
+        
+        if self.orders[0].otype == 'Bid':
+            # Successfully bought a unit
+            self.balance -= transactionprice
+            self.last_purchase_price = transactionprice
+            self.inventory = 1
+            self.job = 'Sell'  # Switch to selling mode
+            
+            print(f"🧠 Belief Graph Trader BOUGHT at ${transactionprice} | Balance: ${self.balance}")
+            
+            # Log the state change
+            self.trading_history.append({
+                'time': time,
+                'event': 'BOUGHT',
+                'price': transactionprice,
+                'new_balance': self.balance,
+                'new_job': self.job
+            })
+            
+        elif self.orders[0].otype == 'Ask':
+            # Successfully sold a unit
+            old_balance = self.balance
+            self.balance += transactionprice
+            if self.last_purchase_price is not None:
+                profit = transactionprice - self.last_purchase_price
+                self.total_profit += profit
+                if profit >= 0:
+                    self.successful_trades += 1
+                    emoji = "🟢"
+                else:
+                    self.failed_trades += 1
+                    emoji = "🔴"
+                print(f"{emoji} Belief Graph Trader SOLD at ${transactionprice} | Profit: ${profit} | Total Profit: ${self.total_profit:.2f}")
+            else:
+                profit = 0
+                print(f"🔴 Belief Graph Trader SOLD at ${transactionprice} | No purchase price recorded")
+            
+            self.inventory = 0
+            self.last_purchase_price = None
+            self.job = 'Buy'  # Switch back to buying mode
+            
+            # Log the state change
+            self.trading_history.append({
+                'time': time,
+                'event': 'SOLD', 
+                'price': transactionprice,
+                'profit': profit,
+                'new_balance': self.balance,
+                'new_job': self.job
+            })
+
+        # Update trade count and profit per time
+        self.n_trades += 1
+        self.profitpertime = self.balance / (time - self.birthtime) if time > self.birthtime else 0
+
+        # Clear the executed order
+        self.del_order(order)
+
+
 # #########################---Below lies the experiment/test-rig---##################
 
 
@@ -3163,6 +3836,8 @@ def populate_market(trdrs_spec, traders, shuffle, vrbs):
             return TraderPT2('PT2', name, proptrader_balance, parameters, time0)
         elif robottype == 'LLM':
             return TraderLLMProp('LLM', name, proptrader_balance, parameters, time0)
+        elif robottype == 'BG':
+            return TraderBeliefGraph('BG', name, proptrader_balance, parameters, time0)
         else:
             sys.exit('FATAL: don\'t know trader type %s\n' % robottype)
 
@@ -3542,7 +4217,7 @@ def calculate_prop_trader_net_worth(traders, lob=None):
     net_worths = {}
     
     for tid, trader in traders.items():
-        if trader.ttype in ['PT1', 'PT2', 'LLM']:
+        if trader.ttype in ['PT1', 'PT2', 'LLM', 'BG']:
             net_worth = trader.balance
             
             # Check if trader is holding inventory
@@ -3696,7 +4371,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     # Initialize proprietary trader net worth tracking
     prop_net_worth_file = open(sess_id + '_prop_net_worths.csv', 'w')
     prop_net_worth_writer = csv.writer(prop_net_worth_file)
-    prop_net_worth_writer.writerow(['Timestamp', 'PT1_NetWorth', 'PT2_NetWorth', 'LLM_NetWorth'])
+    prop_net_worth_writer.writerow(['Timestamp', 'PT1_NetWorth', 'PT2_NetWorth', 'LLM_NetWorth', 'BG_NetWorth'])
         
     # initialise the exchange
     exchange = Exchange()
@@ -3776,7 +4451,8 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
                     int(time),
                     net_worths.get('PT1', 500),  # Default to starting balance if no data
                     net_worths.get('PT2', 500),
-                    net_worths.get('LLM', 500)
+                    net_worths.get('LLM', 500),
+                    net_worths.get('BG', 500)
                 ])
 
             # traders respond to whatever happened
@@ -3829,7 +4505,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     
     prop_traders = []
     for tid, trader in traders.items():
-        if trader.ttype in ['PT1', 'PT2', 'LLM']:
+        if trader.ttype in ['PT1', 'PT2', 'LLM', 'BG']:
             net_worth = trader.balance
             
             # Check if trader is holding inventory
@@ -3876,7 +4552,7 @@ if __name__ == "__main__":
         price_offset_filename = sys.argv[1]
 
     # set up common parameters for all market sessions
-    n_days = 1/720
+    n_days = 1/1440
     hours_in_a_day = 24     # how many hours the exchange operates for in a working day (e.g. NYSE = 7.5)
     start_time = 0.0
     end_time = 60.0 * 60.0 * hours_in_a_day * n_days
@@ -4071,7 +4747,7 @@ if __name__ == "__main__":
         # proptraders_spec specifies strategies played by proprietary-traders, and how many of each
         proptraders_spec = [('PT1', 1, {'bid_percent': 0.95, 'ask_delta': 2, 'n_past_trades': 5}), 
                            ('PT2', 1, {'bid_percent': 0.99, 'ask_delta': 2, 'n_past_trades': 5}),
-                           ('LLM', 1)]
+                           ('LLM', 1), ('BG', 1)]
 
         # trader_spec wraps up the specifications for the buyers, sellers, and proptraders
         traders_spec = {'sellers': sellers_spec, 'buyers': buyers_spec, 'proptraders': proptraders_spec}
