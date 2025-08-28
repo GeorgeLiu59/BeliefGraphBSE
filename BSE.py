@@ -56,7 +56,18 @@ import random
 import os
 import time as chrono
 import csv
+import logging
 from datetime import datetime
+
+# Setup separate logger for HM LLM traders ONLY (fresh log each run)
+hm_logger = logging.getLogger('hm_llm_traders')
+hm_logger.setLevel(logging.DEBUG)
+if not hm_logger.handlers:
+    hm_handler = logging.FileHandler('hm_llm_traders.log', mode='w')  # 'w' mode overwrites existing file
+    hm_formatter = logging.Formatter('%(asctime)s - %(message)s')
+    hm_handler.setFormatter(hm_formatter)
+    hm_logger.addHandler(hm_handler)
+    hm_logger.propagate = False  # Don't propagate to root logger
 
 # LLM and belief graph imports
 import google.generativeai as genai
@@ -3735,6 +3746,974 @@ No explanation needed."""
         self.del_order(order)
 
 
+import asyncio
+
+# LLM Trader Classes
+
+class HypothesisScaffold:
+    """
+    Modular hypothesis scaffolding system for opponent strategy modeling.
+    
+    This class provides a clean, orthogonal layer on top of existing trading logic
+    to generate, evaluate, and utilize hypotheses about opponent strategies.
+    """
+    
+    def __init__(self, trader_id, model=None, logger=None):
+        """Initialize the hypothesis scaffolding system"""
+        self.trader_id = trader_id
+        self.model = model
+        self.logger = logger or hm_logger  # Default to hm_logger for HM traders
+        
+        # Hypothesis storage
+        self.opponent_hypotheses = {}  # {hypothesis_id: hypothesis_data}
+        self.hypothesis_counter = 0
+        
+        # Learning parameters - EXACT HM VALUES
+        self.alpha = 0.3  # HM original learning rate
+        self.correct_guess_reward = 1  # HM reward for correct predictions
+        self.good_hypothesis_thr = 0.7  # HM original threshold (higher = more selective)
+        self.top_k = 5  # HM original top K for evaluation
+        self.max_hypotheses_per_trader = 10  # Allow more hypotheses per trader
+        
+        self.logger.info(f"[HYP-SCAFFOLD] {trader_id}: Initialized hypothesis scaffolding system")
+    
+    def observe_opponent_action(self, opponent_id, action_data, market_context):
+        """
+        STEP 1: Create hypothesis about opponent strategy when observing their action
+        
+        Args:
+            opponent_id: ID of the opponent trader
+            action_data: Dict with opponent's action (price, timing, etc.)
+            market_context: Current market state for context
+        """
+        if not self.model:
+            return  # Skip if no LLM available
+            
+        try:
+            # Generate hypothesis about this opponent's strategy
+            hypothesis_prompt = self._create_hypothesis_prompt(opponent_id, action_data, market_context)
+            
+            self.logger.debug(f"[HYP-CREATE-FULL-PROMPT] {self.trader_id}:")
+            self.logger.debug("="*80)
+            self.logger.debug(hypothesis_prompt)
+            self.logger.debug("="*80)
+            
+            response = self.model.generate_content(
+                hypothesis_prompt,
+                generation_config={'temperature': 0.3, 'max_output_tokens': 300}
+            )
+            
+            strategy_text = response.text.strip()
+            
+            self.logger.debug(f"[HYP-CREATE-FULL-RESPONSE] {self.trader_id}:")
+            self.logger.debug("-"*50)
+            self.logger.debug(strategy_text)
+            self.logger.debug("-"*50)
+            
+            # Store new hypothesis
+            self.hypothesis_counter += 1
+            hypothesis_id = f"{opponent_id}_h{self.hypothesis_counter}"
+            
+            # HM ORIGINAL STRUCTURE: Store hypothesis with same format as HM
+            self.opponent_hypotheses[hypothesis_id] = {
+                'target_trader': opponent_id,
+                'possible_other_player_strategy': strategy_text,  # HM key name
+                'value': 0.0,  # HM uses 'value' not 'confidence'
+                'created_time': action_data.get('time', 0),
+                'other_player_next_action': {}  # Will store predictions
+            }
+            
+            self.logger.info(f"[HYP-CREATE] {self.trader_id}: Created hypothesis {hypothesis_id} for {opponent_id}")
+            self.logger.info(f"  Strategy: {strategy_text[:100]}...")
+            
+            # Keep only best hypotheses per trader
+            self._prune_hypotheses(opponent_id)
+            
+        except Exception as e:
+            self.logger.error(f"[HYP-ERROR] {self.trader_id}: Failed to create hypothesis: {e}")
+    
+    async def evaluate_hypotheses(self, opponent_id, actual_action, market_context):
+        """
+        STEP 2: EXACT HM EVALUATION - Batch evaluate top K + latest hypotheses with Rescorla-Wagner
+        
+        Uses original HM pattern:
+        - Sort by value, take top K + latest
+        - Batch evaluation with asyncio.gather
+        - True/False LLM responses with retry logic
+        - Rescorla-Wagner learning updates
+        """
+        if not self.model:
+            return
+            
+        # Find hypotheses for this trader
+        trader_hypotheses = {
+            h_id: h_data for h_id, h_data in self.opponent_hypotheses.items()
+            if h_data['target_trader'] == opponent_id
+        }
+        
+        if not trader_hypotheses:
+            return  # No hypotheses to evaluate
+            
+        # HM ORIGINAL PATTERN: Get latest key + sort others by value
+        latest_key = max(trader_hypotheses.keys()) if trader_hypotheses else None
+        if not latest_key:
+            return
+            
+        sorted_keys = sorted([key for key in trader_hypotheses if key != latest_key],
+                           key=lambda x: trader_hypotheses[x]['value'], 
+                           reverse=True)
+        keys2eval = sorted_keys[:self.top_k] + [latest_key]
+        
+        # HM ORIGINAL: Reset good hypothesis flag each evaluation
+        good_hypothesis_found = False
+        
+        # Filter to hypotheses that have predictions to evaluate
+        valid_keys2eval = []
+        user_messages = []
+        
+        for key in keys2eval:
+            # All hypotheses can be evaluated, no need for 'other_player_next_action' requirement
+            strategy_text = trader_hypotheses[key].get('possible_other_player_strategy', '')
+            if strategy_text:  # Only evaluate if we have a strategy
+                evaluation_prompt = self._create_evaluation_prompt(
+                    strategy_text, actual_action, market_context
+                )
+                
+                self.logger.info(f"[HYP-EVAL-FULL-PROMPT] {self.trader_id} for {key}:")
+                self.logger.info("="*80)
+                self.logger.info(evaluation_prompt)
+                self.logger.info("="*80)
+                
+                user_messages.append(evaluation_prompt)
+                valid_keys2eval.append(key)
+        
+        if not valid_keys2eval:
+            return
+        
+        # HM ORIGINAL: Retry logic with syntax checking
+        correct_syntax = False
+        counter = 0
+        while not correct_syntax and counter < 6:  # HM uses 6 retries
+            correct_syntax = True
+            counter += 1
+            
+            try:
+                # HM ORIGINAL: Batch evaluation with asyncio.gather
+                responses = await asyncio.gather(
+                    *[self._async_llm_evaluate(msg) for msg in user_messages]
+                )
+                
+                for i, response in enumerate(responses):
+                    key = valid_keys2eval[i]
+                    
+                    self.logger.info(f"[HYP-EVAL-FULL-RESPONSE] {self.trader_id} for {key}:")
+                    self.logger.info("-"*50)
+                    self.logger.info(response)
+                    self.logger.info("-"*50)
+                    
+                    # Parse True/False response
+                    is_correct = self._parse_evaluation_response(response)
+                    
+                    # HM ORIGINAL: Rescorla-Wagner update
+                    old_value = trader_hypotheses[key]['value']
+                    if is_correct:
+                        prediction_error = self.correct_guess_reward - old_value
+                    else:
+                        prediction_error = -self.correct_guess_reward - old_value
+                        
+                    # Apply HM learning rule
+                    trader_hypotheses[key]['value'] += self.alpha * prediction_error
+                    new_value = trader_hypotheses[key]['value']
+                    
+                    # Check if this hypothesis is now good enough
+                    if new_value > self.good_hypothesis_thr:
+                        good_hypothesis_found = True
+                        
+                    self.logger.info(f"[HYP-EVAL-HM] {self.trader_id}: {key}")
+                    self.logger.info(f"  Correct: {is_correct}, Value: {old_value:.3f} → {new_value:.3f}")
+                    self.logger.info(f"  Rescorla-Wagner: {old_value:.3f} + {self.alpha} * {prediction_error:.3f}")
+                    
+            except Exception as e:
+                self.logger.error(f"[HYP-ERROR] {self.trader_id}: Evaluation error (attempt {counter}): {e}")
+                correct_syntax = False
+                
+        self.logger.info(f"[HYP-EVAL-SUMMARY] {self.trader_id}: Evaluated {len(valid_keys2eval)} hypotheses for {opponent_id}")
+        self.logger.info(f"  Good hypothesis found: {good_hypothesis_found} (threshold: {self.good_hypothesis_thr})")
+        
+    async def _async_llm_evaluate(self, prompt):
+        """Helper method for async LLM evaluation"""
+        response = self.model.generate_content(
+            prompt,
+            generation_config={'temperature': 0.2, 'max_output_tokens': 100}
+        )
+        return response.text.strip()
+    
+    def get_good_hypotheses_context(self):
+        """
+        STEP 3: Return context string with all good hypotheses for decision making
+        
+        Returns:
+            String with proven opponent strategies to include in trading prompts
+        """
+        # HM ORIGINAL: Filter by 'value' field above threshold
+        good_hypotheses = {
+            h_id: h_data for h_id, h_data in self.opponent_hypotheses.items()
+            if h_data.get('value', 0) > self.good_hypothesis_thr
+        }
+        
+        if not good_hypotheses:
+            return ""
+            
+        context = "\nOPPONENT STRATEGY INTELLIGENCE:\n"
+        context += f"Based on {len(good_hypotheses)} proven hypotheses:\n\n"
+        
+        # Group by trader
+        by_trader = {}
+        for h_id, h_data in good_hypotheses.items():
+            trader_id = h_data['target_trader']
+            if trader_id not in by_trader:
+                by_trader[trader_id] = []
+            by_trader[trader_id].append(h_data)
+        
+        for trader_id, hypotheses in by_trader.items():
+            # Use the highest value hypothesis for each trader (HM original)
+            best_hypothesis = max(hypotheses, key=lambda h: h.get('value', 0))
+            
+            context += f"Trader {trader_id} Strategy (HM value {best_hypothesis.get('value', 0):.2f}):\n"
+            context += f"{best_hypothesis.get('possible_other_player_strategy', 'Unknown strategy')}\n\n"
+        
+        self.logger.info(f"[HYP-USE] {self.trader_id}: Including {len(good_hypotheses)} good hypotheses in decision context")
+        
+        return context
+    
+    def _create_hypothesis_prompt(self, opponent_id, action_data, market_context):
+        """Create prompt for generating opponent strategy hypothesis"""
+        return f"""Analyze this trader's behavior and determine their strategy:
+
+OPPONENT: {opponent_id}
+ACTION: Traded at price ${action_data.get('price', 'unknown')} at time {action_data.get('time', 0):.1f}
+
+MARKET CONTEXT:
+Best Bid: {market_context.get('best_bid', 'N/A')}
+Best Ask: {market_context.get('best_ask', 'N/A')} 
+Recent Prices: {market_context.get('recent_prices', [])}
+
+Based on this action in this market context, what is this trader's likely strategy?
+Consider: Are they aggressive (quick execution) or conservative (better margins)? 
+Do they follow momentum or mean reversion? Are they market makers?
+
+Respond with a concise strategy description (50-100 words):"""
+
+    def _create_evaluation_prompt(self, strategy_hypothesis, actual_action, market_context):
+        """Create prompt for evaluating hypothesis accuracy"""
+        return f"""Does this trader's action match our hypothesis about their strategy?
+
+OUR HYPOTHESIS: {strategy_hypothesis}
+
+THEIR ACTUAL ACTION: Traded at ${actual_action.get('price', 'unknown')} 
+MARKET CONTEXT:
+Best Bid: {market_context.get('best_bid', 'N/A')}
+Best Ask: {market_context.get('best_ask', 'N/A')} 
+Recent Prices: {market_context.get('recent_prices', [])}
+Does their actual behavior align with our hypothesis? 
+Answer with: "YES - consistent with strategy" OR "NO - does not match strategy"
+"""
+
+    def _parse_evaluation_response(self, response_text):
+        """Parse LLM evaluation response into boolean"""
+        positive_indicators = ['yes', 'consistent', 'matches', 'aligns', 'correct', 'accurate']
+        negative_indicators = ['no', 'inconsistent', 'does not match', 'wrong', 'incorrect']
+        
+        response_lower = response_text.lower()
+        
+        # Check for explicit positive/negative indicators
+        has_positive = any(indicator in response_lower for indicator in positive_indicators)
+        has_negative = any(indicator in response_lower for indicator in negative_indicators)
+        
+        if has_positive and not has_negative:
+            return True
+        elif has_negative and not has_positive:
+            return False
+        else:
+            # Default to neutral/negative if ambiguous
+            return False
+    
+    def _prune_hypotheses(self, trader_id):
+        """Keep only the best hypotheses for a trader - HM original pruning by value"""
+        trader_hypotheses = [
+            (h_id, h_data) for h_id, h_data in self.opponent_hypotheses.items()
+            if h_data['target_trader'] == trader_id
+        ]
+        
+        if len(trader_hypotheses) > self.max_hypotheses_per_trader:
+            # Sort by HM 'value' field and keep the best ones
+            trader_hypotheses.sort(key=lambda x: x[1].get('value', 0), reverse=True)
+            
+            # Remove the worst hypotheses
+            to_remove = trader_hypotheses[self.max_hypotheses_per_trader:]
+            for h_id, _ in to_remove:
+                del self.opponent_hypotheses[h_id]
+                
+            self.logger.info(f"[HYP-PRUNE-HM] {self.trader_id}: Pruned {len(to_remove)} hypotheses for {trader_id}")
+            self.logger.info(f"  Kept hypotheses with values: {[h[1].get('value', 0) for h in trader_hypotheses[:self.max_hypotheses_per_trader]]}")
+
+
+
+class TraderHMLLMProp(Trader):
+    """
+    LLM-based proprietary trader that follows the same buy-and-hold strategy pattern as PT1/PT2
+    but uses LLM decision making for determining when to buy and sell.
+    """
+
+    def __init__(self, ttype, tid, balance, params, time):
+        """
+        Initialize the LLM proprietary trader
+        :param ttype: the trader type
+        :param tid: the trader I.D.
+        :param balance: starting balance (should be same as PT1/PT2)
+        :param params: parameters including API key and trading strategy params
+        :param time: current time
+        """
+        Trader.__init__(self, ttype, tid, balance, params, time)
+        
+        # LLM configuration
+        self.api_key = None
+        self.model_name = 'gemini-2.0-flash-lite'
+        self.temperature = 0.3  # Lower temperature for more consistent trading decisions
+        self.max_tokens = 500
+        
+        # Parse LLM parameters if provided
+        if params is not None:
+            if 'api_key' in params:
+                self.api_key = params['api_key']
+            if 'model_name' in params:
+                self.model_name = params['model_name']
+            if 'temperature' in params:
+                self.temperature = params['temperature']
+        
+        # Get API key from environment if not provided
+        if not self.api_key:
+            self.api_key = os.getenv('GOOGLE_API_KEY')
+        
+        # Enable debug prints only for HMLLMProp
+        self.debug_enabled = True
+        
+        # Initialize the LLM
+        if self.api_key:
+            genai.configure(api_key=self.api_key)
+            self.model = genai.GenerativeModel(self.model_name)
+            hm_logger.info(f"Initialized HMLLM prop trader {tid} with model {self.model_name}")
+        else:
+            hm_logger.warning(f"No API key provided for HMLLM prop trader {tid}")
+            self.model = None
+        
+        # Proprietary trading state (similar to PT1/PT2)
+        self.job = 'Buy'  # flag switches between 'Buy' & 'Sell'
+        self.last_purchase_price = None
+        self.inventory = 0  # how many units we currently hold
+        
+        # Trading history for LLM context
+        self.trading_history = []
+        self.max_history = 20
+        
+        # Default trading parameters (can be overridden in params)
+        self.n_past_trades = 5      # how many recent trades to analyze
+        self.min_profit_margin = 5  # minimum profit we want when selling
+        
+        if params is not None:
+            if 'n_past_trades' in params:
+                self.n_past_trades = params['n_past_trades']
+            if 'min_profit_margin' in params:
+                self.min_profit_margin = params['min_profit_margin']
+        
+        # Debug mode
+        self.debug_mode = False
+        
+        # Initialize hypothesis scaffolding system
+        self.hypothesis_scaffold = HypothesisScaffold(self.tid, self.model, hm_logger)
+        hm_logger.info(f"[SCAFFOLD] {self.tid}: Hypothesis scaffolding initialized")
+
+    def _format_market_context(self, lob, time):
+        """
+        Format market data for the LLM in a structured way
+        """
+        # Recent transaction prices for context
+        recent_prices = []
+        tape_position = -1
+        n_prices = 0
+        while n_prices < self.n_past_trades and abs(tape_position) < len(lob['tape']):
+            if lob['tape'][tape_position]['type'] == 'Trade':
+                recent_prices.append(lob['tape'][tape_position]['price'])
+                n_prices += 1
+            tape_position -= 1
+        
+        avg_price = sum(recent_prices) / len(recent_prices) if recent_prices else None
+        avg_price_str = f"{avg_price:.1f}" if avg_price else "N/A"
+        
+        # Current market state
+        best_bid = lob['bids']['best'] if lob['bids']['n'] > 0 else None
+        best_ask = lob['asks']['best'] if lob['asks']['n'] > 0 else None
+        bid_ask_spread = (best_ask - best_bid) if (best_bid and best_ask) else None
+        
+        # Analyze trader activity
+        trade_analysis = self.analyze_recent_trades(lob, n_trades=10)
+        trader_activity = trade_analysis['trader_activity']
+        
+        # HYPOTHESIS SCAFFOLDING: Observe opponent actions and create/evaluate hypotheses
+        self._process_opponent_observations(trader_activity, {
+            'best_bid': best_bid,
+            'best_ask': best_ask,
+            'recent_prices': recent_prices,
+            'time': time
+        })
+        
+        # Format trader activity information
+        trader_info = ""
+        if trader_activity:
+            trader_info = "RECENT TRADER ACTIVITY:\n"
+            for trader_id, activity in trader_activity.items():
+                if trader_id != self.tid:  # Don't show our own activity
+                    avg_price_str = f"${activity['avg_price']:.1f}" if activity['avg_price'] is not None else "N/A"
+                trader_info += f"Trader {trader_id}: {activity['trades']} trades, avg price {avg_price_str}\n"
+        
+        # Clear state reporting
+        context = f"""MARKET DATA:
+Time: {time:.1f}
+Best Bid: {best_bid}
+Best Ask: {best_ask}
+Spread: {bid_ask_spread}
+Recent prices: {recent_prices}
+Average recent price: {avg_price_str}
+
+{trader_info}
+MY CURRENT STATE:
+Balance: ${self.balance}
+Current job: {self.job}
+Inventory: {self.inventory} units
+Last purchase price: ${self.last_purchase_price if self.last_purchase_price else 'None'}
+Number of completed trades: {self.n_trades}
+
+RECENT DECISIONS:
+{self._format_recent_history()}
+"""
+        return context
+
+    def _format_recent_history(self):
+        """Format recent trading decisions and state changes for context"""
+        if not self.trading_history:
+            return "No recent trading history"
+        
+        history_str = ""
+        for entry in self.trading_history[-5:]:  # Last 5 events
+            if 'event' in entry and entry['event'] in ['BOUGHT', 'SOLD']:
+                # This is a trade execution
+                if entry['event'] == 'BOUGHT':
+                    history_str += f"Time {entry['time']:.1f}: BOUGHT at ${entry['price']}, switched to job={entry['new_job']}\n"
+                else:  # SOLD
+                    history_str += f"Time {entry['time']:.1f}: SOLD at ${entry['price']}, profit=${entry['profit']}, switched to job={entry['new_job']}\n"
+            else:
+                # This is a decision
+                history_str += f"Time {entry['time']:.1f}: DECISION={entry['decision']} - {entry['reasoning'][:80]}...\n"
+        return history_str
+
+    def _process_opponent_observations(self, trader_activity, market_context):
+        """
+        HYPOTHESIS SCAFFOLDING: Process recent opponent actions for hypothesis generation/evaluation
+        
+        Args:
+            trader_activity: Dict of recent trader activity from analyze_recent_trades()
+            market_context: Current market state info
+        """
+        if not trader_activity or not self.hypothesis_scaffold:
+            return
+            
+        # Track opponents we've seen before vs new ones
+        seen_opponents = set()
+        
+        for trader_id, activity in trader_activity.items():
+            if trader_id == self.tid:
+                continue  # Skip our own activity
+                
+            # Extract opponent action data
+            opponent_action = {
+                'trader_id': trader_id,
+                'price': activity.get('avg_price'),  
+                'trades': activity.get('trades', 0),
+                'time': market_context.get('time', 0)
+            }
+            
+            # Skip if no meaningful price data
+            if opponent_action['price'] is None:
+                continue
+                
+            # STEP 1: Create hypothesis if this is a new or interesting opponent behavior
+            if trader_id not in seen_opponents and opponent_action['trades'] > 0:
+                self.hypothesis_scaffold.observe_opponent_action(
+                    trader_id, opponent_action, market_context
+                )
+                seen_opponents.add(trader_id)
+                
+            # STEP 2: Evaluate existing hypotheses for this trader
+            # Handle async evaluation in sync context
+            try:
+                import asyncio
+                loop = asyncio.get_running_loop()
+                # If we're already in a loop, skip async evaluation to avoid blocking
+                hm_logger.info(f"[HYP-SKIP] {self.tid}: Skipping async evaluation (in event loop)")
+            except RuntimeError:
+                # No running loop - safe to use asyncio.run
+                import asyncio
+                asyncio.run(self.hypothesis_scaffold.evaluate_hypotheses(
+                    trader_id, opponent_action, market_context
+                ))
+
+    def _get_llm_trading_decision(self, market_context):
+        """
+        Get trading decision from LLM
+        """
+        if not self.model:
+            return self._fallback_decision()
+        
+    def _get_llm_trading_decision(self, market_context):
+        """
+        Get trading decision from LLM
+        """
+        if not self.model:
+            return self._fallback_decision()
+        
+        # Extract market data from context for use in prompts
+        avg_price_line = [line for line in market_context.split('\n') if 'Average recent price:' in line]
+        avg_price_str = avg_price_line[0].split(': ')[1] if avg_price_line else "N/A"
+        
+        best_bid_line = [line for line in market_context.split('\n') if 'Best Bid:' in line]
+        best_bid_str = best_bid_line[0].split(': ')[1] if best_bid_line else "None"
+        
+        # Get hypothesis context about other traders
+        hypothesis_context = self.hypothesis_scaffold.get_good_hypotheses_context()
+        
+        if self.job == 'Buy':
+            prompt = f"""You are a proprietary trader with ${self.balance} trying to make profit by buying low and selling high.
+
+{market_context}
+
+CURRENT SITUATION: You currently have NO INVENTORY and are looking to BUY a unit.
+
+IMPORTANT: You MUST make a profit. Your goal is to end with MORE money than you started with.
+
+MARKET EDUCATION:
+- Price ranges typically between $1-$500 in this market
+- Recent average price: {avg_price_str}
+- You started with $500 - consider how your current balance reflects your trading performance
+- Successful prop traders typically aim for small, consistent profits rather than big gambles
+
+TRADER ANALYSIS:
+- Pay attention to which other traders are active and their average prices
+- Analyze their trading patterns and use this information to inform your decisions
+- Consider what their activity might indicate about market conditions
+
+STRATEGIC INTELLIGENCE - Other Traders' Behavior Patterns:
+The following are learned strategies of other active traders based on their past actions. 
+Use this intelligence to anticipate their moves and find profitable opportunities:
+
+{hypothesis_context}
+
+HOW ORDER BOOKS WORK:
+- To BUY: Place a BID order at your desired price
+- If sellers exist at/below your bid price → immediate execution
+- If no sellers at your price → your bid waits on the order book for sellers
+- Higher bids are more likely to execute quickly
+
+TRADING PRINCIPLES TO CONSIDER:
+- "Buy low, sell high" means buying below recent average prices when possible
+- Risk management: avoid spending your entire balance on one trade
+- Learn from history: if recent trades lost money, consider what went wrong
+- Liquidity: sometimes waiting for better prices is smarter than forcing trades
+- Trader behavior: analyze other traders' activity and draw your own conclusions
+
+Respond with ONLY:
+"BUY [exact_price]" - to place a bid at that price
+"WAIT" - to wait for better conditions
+
+No explanation needed."""
+
+        elif self.job == 'Sell':
+            prompt = f"""You are a proprietary trader trying to make profit by buying low and selling high.
+
+{market_context}
+
+CURRENT SITUATION: You are holding 1 unit that you bought for ${self.last_purchase_price}. You need to SELL it.
+
+IMPORTANT: You MUST make a profit. Your goal is to end with MORE money than you started with ($500).
+
+MARKET EDUCATION:
+- Price ranges typically between $1-$500 in this market
+- Recent average price: {avg_price_str}
+- You started with $500 - your current balance shows your trading track record
+- Every sale is an opportunity to learn and improve your strategy
+
+TRADER ANALYSIS:
+- Pay attention to which other traders are active and their average prices
+- Analyze their trading patterns and use this information to inform your decisions
+- Consider what their activity might indicate about market demand
+
+STRATEGIC INTELLIGENCE - Other Traders' Behavior Patterns:
+The following are learned strategies of other active traders based on their past actions. 
+Use this intelligence to anticipate their moves and optimize your selling price:
+
+{hypothesis_context}
+
+HOW ORDER BOOKS WORK:
+- To SELL: Place an ASK order at your desired price
+- If buyers exist at/above your ask price → immediate execution  
+- If no buyers at your price → your ask waits on the order book for buyers
+- Lower asks are more likely to execute quickly
+
+PROFIT/LOSS ANALYSIS:
+- You bought at: ${self.last_purchase_price}
+- Break-even price: ${self.last_purchase_price}
+- To profit: sell above ${self.last_purchase_price}
+- Current best bid: {best_bid_str} (immediate execution if you ask at/below this)
+
+TRADING PRINCIPLES TO CONSIDER:
+- Profit target: what's a reasonable profit margin for this trade?
+- Risk management: sometimes taking a small loss prevents a bigger loss
+- Market conditions: is the market trending up or down?
+- Patience vs urgency: waiting might get a better price, or price might fall further
+- Learning: what does this trade teach you about timing and pricing?
+- Trader behavior: analyze other traders' activity and draw your own conclusions
+
+Respond with ONLY:
+"SELL [exact_price]" - to place an ask at that price  
+"WAIT" - to wait for better conditions
+
+No explanation needed."""
+
+        else:
+            # This shouldn't happen but handle gracefully
+            return self._fallback_decision()
+
+        # Log the full trading decision prompt
+        hm_logger.debug(f"[HMLLM-TRADING-PROMPT] {self.tid}:")
+        hm_logger.debug("="*80)
+        hm_logger.debug(prompt)
+        hm_logger.debug("="*80)
+        
+        try:
+            response = self.model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=self.temperature,
+                    max_output_tokens=self.max_tokens
+                )
+            )
+            
+            response_text = response.text.strip()
+            
+            # Log the full LLM response
+            hm_logger.debug(f"[HMLLM-TRADING-RESPONSE] {self.tid}:")
+            hm_logger.debug("-"*50)
+            hm_logger.debug(response_text)
+            hm_logger.debug("-"*50)
+            
+            return self._parse_llm_response(response_text)
+            
+        except Exception as e:
+            print(f"LLM API error for trader {self.tid}: {e}")
+            return self._fallback_decision()
+
+    def _parse_llm_response(self, response_text):
+        """
+        Parse LLM response into actionable decision
+        """
+        response_upper = response_text.upper()
+        
+        # Look for explicit decision patterns first (more specific)
+        import re
+        
+        # Check for explicit BUY command with price
+        buy_match = re.search(r'BUY\s+(\d+)', response_upper)
+        if buy_match and self.job == 'Buy':
+            price = int(buy_match.group(1))
+            # Ensure price is within valid bounds
+            price = max(1, min(500, price))
+            return {
+                'action': 'BUY',
+                'price': price,
+                'reasoning': response_text
+            }
+        
+        # Check for explicit SELL command with price
+        sell_match = re.search(r'SELL\s+(\d+)', response_upper)
+        if sell_match and self.job == 'Sell':
+            price = int(sell_match.group(1))
+            # Ensure price is within valid bounds
+            price = max(1, min(500, price))
+            return {
+                'action': 'SELL',
+                'price': price,
+                'reasoning': response_text
+            }
+        
+        # If no explicit price commands found, default to WAIT
+        return {
+            'action': 'WAIT',
+            'price': None,
+            'reasoning': response_text
+        }
+
+    def _fallback_decision(self):
+        """
+        Simple fallback decision if LLM is unavailable
+        """
+        return {
+            'action': 'WAIT',
+            'price': None,
+            'reasoning': 'LLM unavailable, using fallback wait strategy'
+        }
+
+    def getorder(self, time, countdown, lob):
+        """
+        Return this trader's order when polled in the main market session loop
+        """
+        if getattr(self, 'debug_enabled', False):
+            hm_logger.debug(f"DEBUG {self.tid}: getorder called at time {time:.1f}")
+        
+        if countdown < 0:
+            sys.exit('Negative countdown')
+
+        if len(self.orders) < 1 or time < 0.1 * 60:
+            order = None
+        else:
+            # We have an order, execute it
+            quoteprice = self.orders[0].price
+            order = Order(self.tid, self.orders[0].otype, quoteprice, 
+                         self.orders[0].qty, time, lob['QID'])
+            self.lastquote = order
+            return order
+
+        return None
+
+    def respond(self, time, lob, trade, vrbs):
+        """
+        Respond to market events and make trading decisions
+        """
+        # Update profit per time
+        self.profitpertime = self.profitpertime_update(time, self.birthtime, self.balance)
+        
+        hm_logger.debug(f"[HMLLM-RESPOND] {self.tid}: respond() called at time {time:.1f}")
+        
+        # Let LLM decide when to start trading - no forced delays
+        
+        # Get market context and LLM decision
+        market_context = self._format_market_context(lob, time)
+        decision = self._get_llm_trading_decision(market_context)
+        
+        hm_logger.debug(f"[HMLLM-DECISION] {self.tid}: LLM decided {decision['action']} at time {time:.1f}")
+        
+        # Log the decision
+        self.trading_history.append({
+            'time': time,
+            'decision': decision['action'],
+            'reasoning': decision['reasoning']
+        })
+        
+        # Keep history manageable
+        if len(self.trading_history) > self.max_history:
+            self.trading_history = self.trading_history[-self.max_history:]
+
+        # Act on the decision - let LLM have full control
+        hm_logger.debug(f"[HMLLM-JOB] {self.tid}: Current job={self.job}, decision={decision['action']}")
+        
+        if decision['action'] == 'BUY' and self.job == 'Buy':
+            hm_logger.debug(f"[HMLLM-EXECUTE] {self.tid}: Executing BUY decision")
+            self._execute_buy_decision(decision, lob, time)
+        elif decision['action'] == 'SELL' and self.job == 'Sell':
+            hm_logger.debug(f"[HMLLM-EXECUTE] {self.tid}: Executing SELL decision")
+            self._execute_sell_decision(decision, lob, time)
+        else:
+            hm_logger.debug(f"[HMLLM-NO-ACTION] {self.tid}: No action taken - job={self.job}, decision={decision['action']}")
+
+    def _execute_buy_decision(self, decision, lob, time):
+        """
+        Execute a buy decision with LLM-specified price
+        """
+        if lob['asks']['n'] == 0:
+            return  # No asks available
+
+        # Ensure we have a valid price from LLM
+        buy_price = decision['price']
+        if buy_price is None:
+            if self.debug_mode:
+                hm_logger.warning(f"{self.tid} BUY decision has no price, skipping")
+            return
+        
+        # Only safety check: can we afford it?
+        if buy_price <= self.balance:
+            order = Order(self.tid, 'Bid', buy_price, 1, time, lob['QID'])
+            self.orders = [order]
+        elif self.debug_mode:
+            hm_logger.warning(f"{self.tid} cannot afford price {buy_price}, balance is {self.balance}")
+
+    def _execute_sell_decision(self, decision, lob, time):
+        """
+        Execute a sell decision with LLM-specified price
+        """
+        if lob['bids']['n'] == 0:
+            return  # No bids available
+
+        # Ensure we have a valid price from LLM
+        sell_price = decision['price']
+        if sell_price is None:
+            if self.debug_mode:
+                hm_logger.warning(f"{self.tid} SELL decision has no price, skipping")
+            return
+        
+        # Create the order at LLM's chosen price
+        order = Order(self.tid, 'Ask', sell_price, 1, time, lob['QID'])
+        self.orders = [order]
+
+    def bookkeep(self, time, trade, order, vrbs):
+        """
+        Update trader's records after a successful trade - CRITICAL for state management
+        """
+        # Standard bookkeeping
+        self.blotter.append(trade)
+        self.blotter = self.blotter[-self.blotter_length:]
+
+        transactionprice = trade['price']
+        
+        if self.orders[0].otype == 'Bid':
+            # Successfully bought a unit
+            self.balance -= transactionprice
+            self.last_purchase_price = transactionprice
+            self.inventory = 1
+            self.job = 'Sell'  # CRITICAL: Switch to selling mode
+            
+            if getattr(self, 'debug_enabled', False):
+                hm_logger.info(f"📦 HM LLM Trader BOUGHT at ${transactionprice} | Balance: ${self.balance}")
+            
+            # Log the state change
+            self.trading_history.append({
+                'time': time,
+                'event': 'BOUGHT',
+                'price': transactionprice,
+                'new_balance': self.balance,
+                'new_job': self.job
+            })
+            
+        elif self.orders[0].otype == 'Ask':
+            # Successfully sold a unit
+            old_balance = self.balance
+            self.balance += transactionprice
+            if self.last_purchase_price is not None:
+                profit = transactionprice - self.last_purchase_price
+                emoji = "🟢" if profit >= 0 else "🔴"
+                if getattr(self, 'debug_enabled', False):
+                    hm_logger.info(f"{emoji} HM LLM Trader SOLD at ${transactionprice} | Profit: ${profit} | Balance: ${self.balance}")
+            else:
+                profit = 0  # Fallback if purchase price is missing
+                if getattr(self, 'debug_enabled', False):
+                    hm_logger.info(f"🔴 HM LLM Trader SOLD at ${transactionprice} | No purchase price recorded | Balance: ${self.balance}")
+            
+            self.inventory = 0
+            self.last_purchase_price = None
+            self.job = 'Buy'  # CRITICAL: Switch back to buying mode
+            
+            # Log the state change
+            self.trading_history.append({
+                'time': time,
+                'event': 'SOLD', 
+                'price': transactionprice,
+                'profit': profit,
+                'new_balance': self.balance,
+                'new_job': self.job
+            })
+
+        # Update trade count and profit per time
+        self.n_trades += 1
+        self.profitpertime = self.balance / (time - self.birthtime) if time > self.birthtime else 0
+
+        # Clear the executed order
+        self.del_order(order)
+
+    def analyze_recent_trades(self, lob, n_trades=10):
+        """
+        Analyze recent trades to understand market activity and trader behavior
+        :param lob: the current limit order book
+        :param n_trades: number of recent trades to analyze
+        :return: dictionary with analysis results
+        """
+        if not lob['tape']:
+            return {'trader_activity': {}, 'trade_patterns': {}}
+        
+        # Get recent trades
+        recent_trades = []
+        tape_position = -1
+        n_analyzed = 0
+        
+        while n_analyzed < n_trades and abs(tape_position) < len(lob['tape']):
+            if lob['tape'][tape_position]['type'] == 'Trade':
+                trade = lob['tape'][tape_position]
+                recent_trades.append(trade)
+                n_analyzed += 1
+            tape_position -= 1
+        
+        if not recent_trades:
+            return {'trader_activity': {}, 'trade_patterns': {}}
+        
+        # Analyze trader activity
+        trader_activity = {}
+        trader_prices = {}
+        
+        for trade in recent_trades:
+            # Count trades by trader
+            for party in ['party1', 'party2']:
+                trader_id = trade[party]
+                if trader_id not in trader_activity:
+                    trader_activity[trader_id] = {'trades': 0, 'total_volume': 0}
+                trader_activity[trader_id]['trades'] += 1
+                trader_activity[trader_id]['total_volume'] += trade['qty']
+                
+                # Track prices by trader
+                if trader_id not in trader_prices:
+                    trader_prices[trader_id] = []
+                trader_prices[trader_id].append(trade['price'])
+        
+        # Calculate average prices for each trader
+        for trader_id in trader_prices:
+            avg_price = sum(trader_prices[trader_id]) / len(trader_prices[trader_id])
+            trader_activity[trader_id]['avg_price'] = avg_price
+            trader_activity[trader_id]['price_range'] = {
+                'min': min(trader_prices[trader_id]),
+                'max': max(trader_prices[trader_id])
+            }
+        
+        # Analyze trade patterns
+        trade_patterns = {
+            'total_trades': len(recent_trades),
+            'price_trend': 'stable',
+            'volume_trend': 'stable'
+        }
+        
+        if len(recent_trades) >= 2:
+            # Simple trend analysis
+            first_half = recent_trades[:len(recent_trades)//2]
+            second_half = recent_trades[len(recent_trades)//2:]
+            
+            first_avg = sum(t['price'] for t in first_half) / len(first_half)
+            second_avg = sum(t['price'] for t in second_half) / len(second_half)
+            
+            if second_avg > first_avg * 1.02:  # 2% increase
+                trade_patterns['price_trend'] = 'increasing'
+            elif second_avg < first_avg * 0.98:  # 2% decrease
+                trade_patterns['price_trend'] = 'decreasing'
+        
+        return {
+            'trader_activity': trader_activity,
+            'trade_patterns': trade_patterns,
+            'recent_trades': recent_trades
+        }
+
 # #########################---Below lies the experiment/test-rig---##################
 
 
@@ -3836,6 +4815,8 @@ def populate_market(trdrs_spec, traders, shuffle, vrbs):
             return TraderPT2('PT2', name, proptrader_balance, parameters, time0)
         elif robottype == 'LLM':
             return TraderLLMProp('LLM', name, proptrader_balance, parameters, time0)
+        elif robottype == "LLMHM":
+            return TraderHMLLMProp('LLMHM', name, proptrader_balance, parameters, time0)
         elif robottype == 'BG':
             return TraderBeliefGraph('BG', name, proptrader_balance, parameters, time0)
         else:
@@ -4397,10 +5378,11 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     frames_done = set()
 
     # Progress tracking
-    total_timesteps = int((endtime - starttime) / timestep)
+    max_timesteps = 500  # Limit simulation to 500 timesteps for testing
+    total_timesteps = min(int((endtime - starttime) / timestep), max_timesteps)
     current_timestep = 0
 
-    while time < endtime:
+    while time < endtime and current_timestep < max_timesteps:
 
         time_left = (endtime - time) / session_duration
         
@@ -4452,7 +5434,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
                     net_worths.get('PT1', 500),  # Default to starting balance if no data
                     net_worths.get('PT2', 500),
                     net_worths.get('LLM', 500),
-                    net_worths.get('BG', 500)
+                    net_worths.get('LLMHM', 500),
                 ])
 
             # traders respond to whatever happened
@@ -4505,7 +5487,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     
     prop_traders = []
     for tid, trader in traders.items():
-        if trader.ttype in ['PT1', 'PT2', 'LLM', 'BG']:
+        if trader.ttype in ['PT1', 'PT2', 'LLM', 'BG', 'LLMHM']:
             net_worth = trader.balance
             
             # Check if trader is holding inventory
@@ -4747,7 +5729,7 @@ if __name__ == "__main__":
         # proptraders_spec specifies strategies played by proprietary-traders, and how many of each
         proptraders_spec = [('PT1', 1, {'bid_percent': 0.95, 'ask_delta': 2, 'n_past_trades': 5}), 
                            ('PT2', 1, {'bid_percent': 0.99, 'ask_delta': 2, 'n_past_trades': 5}),
-                           ('LLM', 1), ('BG', 1)]
+                           ('LLM', 1), ('BG', 1), ('LLMHM', 1)]
 
         # trader_spec wraps up the specifications for the buyers, sellers, and proptraders
         traders_spec = {'sellers': sellers_spec, 'buyers': buyers_spec, 'proptraders': proptraders_spec}
