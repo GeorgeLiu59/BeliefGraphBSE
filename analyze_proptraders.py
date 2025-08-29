@@ -25,11 +25,13 @@ def analyze_proprietary_traders(filename):
         header = next(reader)  # Skip header row
         
         for row in reader:
-            if len(row) >= 4:
+            if len(row) >= 6:
                 timestamp = int(row[0].strip())
                 pt1_net_worth = int(float(row[1].strip()))
                 pt2_net_worth = int(float(row[2].strip()))
                 llm_net_worth = int(float(row[3].strip()))
+                bg_net_worth = int(float(row[4].strip()))
+                llmhm_net_worth = int(float(row[5].strip()))
                 
                 # Store data for each trader
                 prop_traders['PT1']['net_worths'].append(pt1_net_worth)
@@ -40,9 +42,15 @@ def analyze_proprietary_traders(filename):
                 
                 prop_traders['LLM']['net_worths'].append(llm_net_worth)
                 prop_traders['LLM']['timestamps'].append(timestamp)
+                
+                prop_traders['BG']['net_worths'].append(bg_net_worth)
+                prop_traders['BG']['timestamps'].append(timestamp)
+                
+                prop_traders['LLMHM']['net_worths'].append(llmhm_net_worth)
+                prop_traders['LLMHM']['timestamps'].append(timestamp)
     
     # Add initial data point at 0 seconds if not present
-    for trader_type in ['PT1', 'PT2', 'LLM']:
+    for trader_type in ['PT1', 'PT2', 'LLM', 'BG', 'LLMHM']:
         if len(prop_traders[trader_type]['timestamps']) > 0:
             # Check if we already have data at 0 seconds
             if prop_traders[trader_type]['timestamps'][0] != 0:
@@ -93,7 +101,7 @@ def create_research_plot(prop_traders, output_filename):
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
     
     # Colors for each trader
-    colors = {'PT1': '#1f77b4', 'PT2': '#2ca02c', 'LLM': '#d62728'}
+    colors = {'PT1': '#1f77b4', 'PT2': '#2ca02c', 'LLM': '#d62728', 'BG': '#ff7f0e', 'LLMHM': '#9467bd'}
     
     # Plot 1: Bar chart of final net worths
     final_net_worths = []
