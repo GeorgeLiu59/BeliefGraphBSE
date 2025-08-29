@@ -3769,11 +3769,11 @@ class HypothesisScaffold:
         self.hypothesis_counter = 0
         
         # Learning parameters - EXACT HM VALUES
-        self.alpha = 0.3  # HM original learning rate
+        self.alpha = 0.4  # HM original learning rate
         self.correct_guess_reward = 1  # HM reward for correct predictions
-        self.good_hypothesis_thr = 0.7  # HM original threshold (higher = more selective)
-        self.top_k = 5  # HM original top K for evaluation
-        self.max_hypotheses_per_trader = 10  # Allow more hypotheses per trader
+        self.good_hypothesis_thr = 0.6  # HM original threshold (higher = more selective)
+        self.top_k = 2  # Evaluate both beliefs per trader
+        self.max_hypotheses_per_trader = 2  # Store exactly 2 beliefs per trader
         
         self.logger.info(f"[HYP-SCAFFOLD] {trader_id}: Initialized hypothesis scaffolding system")
     
@@ -4127,11 +4127,16 @@ class TraderHMLLMProp(Trader):
                 self.min_profit_margin = params['min_profit_margin']
         
         # Debug mode
-        self.debug_mode = False
+        self.debug_mode = True
         
         # Initialize hypothesis scaffolding system
         self.hypothesis_scaffold = HypothesisScaffold(self.tid, self.model, hm_logger)
         hm_logger.info(f"[SCAFFOLD] {self.tid}: Hypothesis scaffolding initialized")
+
+        # These attributes will control how often the trader stops to "think deeply".
+        self.last_hypothesis_update_time = 0.0
+        # The trader will only run its heavy analysis every 5 seconds of SIMULATION time.
+        self.hypothesis_update_interval = 1.5
 
     def _format_market_context(self, lob, time):
         """
@@ -4160,6 +4165,7 @@ class TraderHMLLMProp(Trader):
         trader_activity = trade_analysis['trader_activity']
         
         # HYPOTHESIS SCAFFOLDING: Observe opponent actions and create/evaluate hypotheses
+        # This is the heavy analysis part that we now control with a timer.
         self._process_opponent_observations(trader_activity, {
             'best_bid': best_bid,
             'best_ask': best_ask,
@@ -4224,42 +4230,61 @@ RECENT DECISIONS:
             trader_activity: Dict of recent trader activity from analyze_recent_trades()
             market_context: Current market state info
         """
+        current_time = market_context.get('time', 0)
+
+        # 1. THROTTLE CHECK: Check if it's time to think.
+        if (current_time - self.last_hypothesis_update_time) < self.hypothesis_update_interval:
+            return
+
+        self.last_hypothesis_update_time = current_time
+        hm_logger.info(f"[HYP-THROTTLE] {self.tid}: Running hypothesis update at time {current_time:.1f}")
+        
         if not trader_activity or not self.hypothesis_scaffold:
             return
             
-        # Track opponents we've seen before vs new ones
-        seen_opponents = set()
+        # 2. SMART FILTER: Prioritize opponents we don't understand yet.
+        understood_opponents = {
+            h_data['target_trader'] for h_id, h_data in self.hypothesis_scaffold.opponent_hypotheses.items()
+            if h_data.get('value', 0) > self.hypothesis_scaffold.good_hypothesis_thr
+        }
         
-        for trader_id, activity in trader_activity.items():
-            if trader_id == self.tid:
-                continue  # Skip our own activity
-                
-            # Extract opponent action data
+        opponents_to_analyze = [
+            (trader_id, activity) for trader_id, activity in trader_activity.items()
+            if trader_id not in understood_opponents and trader_id != self.tid
+        ]
+        
+        if not opponents_to_analyze:
+            hm_logger.debug("[HYP-FILTER] No new/unknown opponents to analyze this cycle.")
+            return
+
+        random.shuffle(opponents_to_analyze)
+
+        # Analyze up to 2 unknown opponents in this thinking cycle.
+        max_opponents_to_analyze = 2
+        
+        # RUN ANALYSIS in a loop for the selected opponents.
+        for trader_id, activity in opponents_to_analyze[:max_opponents_to_analyze]:
             opponent_action = {
                 'trader_id': trader_id,
-                'price': activity.get('avg_price'),  
+                'price': activity.get('avg_price'),
                 'trades': activity.get('trades', 0),
                 'time': market_context.get('time', 0)
             }
             
-            # Skip if no meaningful price data
             if opponent_action['price'] is None:
                 continue
                 
-            # STEP 1: Create hypothesis if this is a new or interesting opponent behavior
-            if trader_id not in seen_opponents and opponent_action['trades'] > 0:
-                self.hypothesis_scaffold.observe_opponent_action(
-                    trader_id, opponent_action, market_context
-                )
-                seen_opponents.add(trader_id)
-                
-            # STEP 2: Evaluate existing hypotheses for this trader
-            # Handle async evaluation in sync context
+            hm_logger.info(f"[HYP-FOCUS] Focusing analysis on new/unknown opponent: {trader_id}")
+            
+            self.hypothesis_scaffold.observe_opponent_action(
+                trader_id, opponent_action, market_context
+            )
+            
             try:
                 import asyncio
                 loop = asyncio.get_running_loop()
                 # If we're already in a loop, skip async evaluation to avoid blocking
-                hm_logger.info(f"[HYP-SKIP] {self.tid}: Skipping async evaluation (in event loop)")
+                hm_logger.debug(f"[HYP-SKIP] Async evaluation skipped (in event loop).")
             except RuntimeError:
                 # No running loop - safe to use asyncio.run
                 import asyncio
@@ -4269,19 +4294,12 @@ RECENT DECISIONS:
 
     def _get_llm_trading_decision(self, market_context):
         """
-        Get trading decision from LLM
+        Get trading decision from LLM. This part is unchanged but will now be called
+        more smoothly because the analysis is throttled.
         """
         if not self.model:
             return self._fallback_decision()
         
-    def _get_llm_trading_decision(self, market_context):
-        """
-        Get trading decision from LLM
-        """
-        if not self.model:
-            return self._fallback_decision()
-        
-        # Extract market data from context for use in prompts
         avg_price_line = [line for line in market_context.split('\n') if 'Average recent price:' in line]
         avg_price_str = avg_price_line[0].split(': ')[1] if avg_price_line else "N/A"
         
@@ -4312,6 +4330,7 @@ TRADER ANALYSIS:
 - Consider what their activity might indicate about market conditions
 
 STRATEGIC INTELLIGENCE - Other Traders' Behavior Patterns:
+{hypothesis_context if hypothesis_context else "No proven hypotheses about opponents yet."}
 The following are learned strategies of other active traders based on their past actions. 
 Use this intelligence to anticipate their moves and find profitable opportunities:
 
@@ -4591,6 +4610,7 @@ No explanation needed."""
             
             if getattr(self, 'debug_enabled', False):
                 hm_logger.info(f"📦 HM LLM Trader BOUGHT at ${transactionprice} | Balance: ${self.balance}")
+            print(f"📦 HM LLM Trader {self.tid} BOUGHT at ${transactionprice} | Balance: ${self.balance}")
             
             # Log the state change
             self.trading_history.append({
@@ -4610,10 +4630,12 @@ No explanation needed."""
                 emoji = "🟢" if profit >= 0 else "🔴"
                 if getattr(self, 'debug_enabled', False):
                     hm_logger.info(f"{emoji} HM LLM Trader SOLD at ${transactionprice} | Profit: ${profit} | Balance: ${self.balance}")
+                print(f"{emoji} HM LLM Trader {self.tid} SOLD at ${transactionprice} | Profit: ${profit} | Balance: ${self.balance}")
             else:
                 profit = 0  # Fallback if purchase price is missing
                 if getattr(self, 'debug_enabled', False):
                     hm_logger.info(f"🔴 HM LLM Trader SOLD at ${transactionprice} | No purchase price recorded | Balance: ${self.balance}")
+                print(f"🔴 HM LLM Trader {self.tid} SOLD at ${transactionprice} | No purchase price recorded | Balance: ${self.balance}")
             
             self.inventory = 0
             self.last_purchase_price = None
@@ -5198,7 +5220,7 @@ def calculate_prop_trader_net_worth(traders, lob=None):
     net_worths = {}
     
     for tid, trader in traders.items():
-        if trader.ttype in ['PT1', 'PT2', 'LLM', 'BG']:
+        if trader.ttype in ['PT1', 'PT2', 'LLM', 'BG', 'LLMHM']:
             net_worth = trader.balance
             
             # Check if trader is holding inventory
@@ -5352,7 +5374,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     # Initialize proprietary trader net worth tracking
     prop_net_worth_file = open(sess_id + '_prop_net_worths.csv', 'w')
     prop_net_worth_writer = csv.writer(prop_net_worth_file)
-    prop_net_worth_writer.writerow(['Timestamp', 'PT1_NetWorth', 'PT2_NetWorth', 'LLM_NetWorth', 'BG_NetWorth'])
+    prop_net_worth_writer.writerow(['Timestamp', 'PT1_NetWorth', 'PT2_NetWorth', 'LLM_NetWorth', 'BG_NetWorth', 'LLMHM_NetWorth', ""])
         
     # initialise the exchange
     exchange = Exchange()
@@ -5378,11 +5400,10 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     frames_done = set()
 
     # Progress tracking
-    max_timesteps = 500  # Limit simulation to 500 timesteps for testing
-    total_timesteps = min(int((endtime - starttime) / timestep), max_timesteps)
+    total_timesteps = int((endtime - starttime) / timestep)
     current_timestep = 0
 
-    while time < endtime and current_timestep < max_timesteps:
+    while time < endtime:
 
         time_left = (endtime - time) / session_duration
         
@@ -5434,6 +5455,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
                     net_worths.get('PT1', 500),  # Default to starting balance if no data
                     net_worths.get('PT2', 500),
                     net_worths.get('LLM', 500),
+                    net_worths.get('BG', 500),
                     net_worths.get('LLMHM', 500),
                 ])
 
