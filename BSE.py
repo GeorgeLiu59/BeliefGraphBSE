@@ -4739,6 +4739,584 @@ No explanation needed."""
 # #########################---Below lies the experiment/test-rig---##################
 
 
+class TraderAdaptive(Trader):
+    """
+    LLM-based trader that can design and adapt its own trading attributes.
+    
+    This trader integrates with the belief graph and uses its attributes to influence
+    trading decisions and belief formation.
+    """
+
+    def __init__(self, ttype, tid, balance, params, time):
+        """
+        Initialize the adaptive trader
+        
+        Args:
+            ttype: Trader type identifier
+            tid: Trader ID
+            balance: Starting balance
+            params: Trader parameters including API key and attribute settings
+            time: Current time
+        """
+        Trader.__init__(self, ttype, tid, balance, params, time)
+        
+        # Initialize attribute system
+        self.attribute_manager = None
+        self.attributes_initialized = False
+        
+        # LLM configuration
+        self.api_key = None
+        self.model_name = 'gemini-2.0-flash-lite'
+        self.temperature = 0.3
+        self.max_tokens = 500
+        
+        # Parse LLM parameters if provided
+        if params is not None:
+            if 'api_key' in params:
+                self.api_key = params['api_key']
+            if 'model_name' in params:
+                self.model_name = params['model_name']
+            if 'temperature' in params:
+                self.temperature = params['temperature']
+        
+        # Get API key from environment if not provided
+        if not self.api_key:
+            self.api_key = os.getenv('GOOGLE_API_KEY')
+        
+        # Initialize LLM if API key is available
+        if self.api_key:
+            genai.configure(api_key=self.api_key)
+            self.model = genai.GenerativeModel(self.model_name)
+            print(f"Initialized Adaptive Trader {tid} with model {self.model_name}")
+        else:
+            print(f"Warning: No API key provided for Adaptive Trader {tid}")
+            self.model = None
+        
+        # Belief graph integration
+        try:
+            self.belief_graph = BeliefGraph(asset_id="BSE_ASSET")
+            self.belief_graph.add_agent(tid)
+        except ImportError:
+            print(f"Warning: belief_graph module not found for trader {tid}")
+            self.belief_graph = None
+        
+        # Trading state
+        self.job = 'Buy'  # Buy or Sell mode
+        self.last_purchase_price = None
+        self.inventory = 0
+        self.n_trades = 0
+        
+        # Performance tracking
+        self.starting_balance = balance
+        self.total_profit = 0.0
+        self.trading_history = []
+        
+        # Attribute adaptation settings
+        self.adaptation_enabled = True
+        self.adaptation_interval = 10  # Every 10 trades
+        self.last_adaptation_check = 0
+        
+        # Market context tracking
+        self.market_context = {
+            'volatility': 0.0,
+            'trend': 'unknown',
+            'competition': 'unknown',
+            'liquidity': 'unknown'
+        }
+        
+        # Initialize attributes if LLM is available
+        if self.model:
+            self.initialize_attributes()
+        else:
+            # Fallback: use balanced strategy if no LLM available
+            self.initialize_attributes_fallback()
+    
+    def initialize_attributes(self):
+        """Initialize the agent's attributes using LLM decision making"""
+        if self.attributes_initialized:
+            return
+        
+        # Update market context
+        self._update_market_context()
+        
+        # Create initial design prompt
+        available_strategies = ["random", "conservative", "aggressive", "balanced", "momentum", "mean_reversion"]
+        
+        prompt = f"""You are a trading agent designing your own trading personality for a financial market.
+
+CURRENT MARKET CONDITIONS:
+- Market volatility: {self.market_context.get('volatility', 'Unknown')}
+- Recent price trend: {self.market_context.get('trend', 'Unknown')}
+- Competition level: {self.market_context.get('competition', 'Unknown')}
+- Available liquidity: {self.market_context.get('liquidity', 'Unknown')}
+
+AVAILABLE DESIGN STRATEGIES:
+- random
+- conservative
+- aggressive
+- balanced
+- momentum
+- mean_reversion
+
+YOUR MISSION:
+Design your trading personality by choosing one of the available strategies. Each strategy creates a different combination of trading attributes that will define how you behave in the market.
+
+RESPOND WITH ONLY:
+"DESIGN: [strategy_name]"
+
+No explanation needed. Choose the strategy that best fits your understanding of the current market conditions and your trading philosophy.
+
+Examples:
+- "DESIGN: conservative"
+- "DESIGN: aggressive"
+- "DESIGN: balanced"
+- "DESIGN: momentum"
+- "DESIGN: mean_reversion"
+- "DESIGN: random"
+"""
+        
+        try:
+            # Get LLM response
+            response = self.model.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=self.temperature,
+                    max_output_tokens=self.max_tokens
+                )
+            )
+            
+            # Parse response and initialize attributes
+            strategy = self._parse_design_response(response.text)
+            self._initialize_attributes_from_strategy(strategy)
+            self.attributes_initialized = True
+            
+            print(f"Adaptive Trader {self.tid} designed attributes using strategy: {strategy}")
+            
+        except Exception as e:
+            print(f"Error in attribute design for trader {self.tid}: {e}")
+            # Fallback to balanced strategy
+            self._initialize_attributes_from_strategy("balanced")
+            self.attributes_initialized = True
+    
+    def initialize_attributes_fallback(self):
+        """Initialize attributes using fallback strategy when no LLM is available"""
+        self._initialize_attributes_from_strategy("balanced")
+        self.attributes_initialized = True
+        print(f"Adaptive Trader {self.tid} using fallback balanced strategy")
+    
+    def _parse_design_response(self, response):
+        """Parse the design strategy from LLM response"""
+        response_upper = response.upper().strip()
+        
+        # Look for "DESIGN: [strategy]" pattern
+        if "DESIGN:" in response_upper:
+            strategy = response_upper.split("DESIGN:")[1].strip()
+            return strategy.lower()
+        
+        # Fallback: look for strategy names in the response
+        strategies = ["random", "conservative", "aggressive", "balanced", "momentum", "mean_reversion"]
+        for strategy in strategies:
+            if strategy.upper() in response_upper:
+                return strategy
+        
+        # Default to balanced if no clear strategy found
+        return "balanced"
+    
+    def _initialize_attributes_from_strategy(self, strategy):
+        """Initialize attributes based on the chosen strategy"""
+        if strategy == "random":
+            self.attributes = {
+                'aggressiveness': random.uniform(0.0, 1.0),
+                'risk_tolerance': random.uniform(0.0, 1.0),
+                'patience': random.uniform(0.0, 1.0),
+                'adaptability': random.uniform(0.0, 1.0),
+                'momentum_following': random.uniform(0.0, 1.0),
+                'mean_reversion': random.uniform(0.0, 1.0)
+            }
+        elif strategy == "conservative":
+            self.attributes = {
+                'aggressiveness': random.uniform(0.0, 0.3),
+                'risk_tolerance': random.uniform(0.0, 0.3),
+                'patience': random.uniform(0.7, 1.0),
+                'adaptability': random.uniform(0.3, 0.6),
+                'momentum_following': random.uniform(0.2, 0.5),
+                'mean_reversion': random.uniform(0.6, 1.0)
+            }
+        elif strategy == "aggressive":
+            self.attributes = {
+                'aggressiveness': random.uniform(0.7, 1.0),
+                'risk_tolerance': random.uniform(0.7, 1.0),
+                'patience': random.uniform(0.0, 0.3),
+                'adaptability': random.uniform(0.6, 1.0),
+                'momentum_following': random.uniform(0.6, 1.0),
+                'mean_reversion': random.uniform(0.0, 0.3)
+            }
+        elif strategy == "balanced":
+            self.attributes = {
+                'aggressiveness': random.uniform(0.4, 0.6),
+                'risk_tolerance': random.uniform(0.4, 0.6),
+                'patience': random.uniform(0.4, 0.6),
+                'adaptability': random.uniform(0.4, 0.6),
+                'momentum_following': random.uniform(0.4, 0.6),
+                'mean_reversion': random.uniform(0.4, 0.6)
+            }
+        elif strategy == "momentum":
+            self.attributes = {
+                'aggressiveness': random.uniform(0.5, 0.8),
+                'risk_tolerance': random.uniform(0.5, 0.8),
+                'patience': random.uniform(0.2, 0.5),
+                'adaptability': random.uniform(0.6, 1.0),
+                'momentum_following': random.uniform(0.8, 1.0),
+                'mean_reversion': random.uniform(0.0, 0.2)
+            }
+        elif strategy == "mean_reversion":
+            self.attributes = {
+                'aggressiveness': random.uniform(0.3, 0.6),
+                'risk_tolerance': random.uniform(0.4, 0.7),
+                'patience': random.uniform(0.6, 1.0),
+                'adaptability': random.uniform(0.3, 0.6),
+                'momentum_following': random.uniform(0.0, 0.3),
+                'mean_reversion': random.uniform(0.8, 1.0)
+            }
+        else:
+            # Default to balanced
+            self.attributes = {
+                'aggressiveness': 0.5,
+                'risk_tolerance': 0.5,
+                'patience': 0.5,
+                'adaptability': 0.5,
+                'momentum_following': 0.5,
+                'mean_reversion': 0.5
+            }
+    
+    def _update_market_context(self):
+        """Update market context based on current conditions"""
+        # This would be populated with real market data during trading
+        self.market_context.update({
+            'volatility': 'Medium',
+            'trend': 'Stable',
+            'competition': 'Moderate',
+            'liquidity': 'High'
+        })
+    
+    def should_check_adaptation(self):
+        """Check if it's time to consider attribute adaptation"""
+        if not self.adaptation_enabled:
+            return False
+        
+        return self.n_trades >= self.last_adaptation_check + self.adaptation_interval
+    
+    def check_and_adapt_attributes(self):
+        """Check if attributes should be adapted and perform adaptation if needed"""
+        if not self.should_check_adaptation():
+            return
+        
+        if not self.model or not self.attributes_initialized:
+            return
+        
+        # Calculate performance metrics
+        performance_metrics = self._calculate_performance_metrics()
+        
+        # Check if adaptation is needed
+        if self._should_adapt(performance_metrics):
+            strategy = self._determine_adaptation_strategy(performance_metrics)
+            self._apply_adaptation(strategy, performance_metrics)
+            print(f"Trader {self.tid} adapted attributes to {strategy}")
+        
+        # Update adaptation check timestamp
+        self.last_adaptation_check = self.n_trades
+    
+    def _should_adapt(self, performance_metrics):
+        """Determine if attributes should be adapted"""
+        # Adapt if performance is poor
+        if performance_metrics.get('profit', 0) < -50:  # Lost more than $50
+            return True
+        
+        # Adapt if market conditions have changed significantly
+        if performance_metrics.get('market_volatility', 0) > 0.8:
+            return True
+        
+        # Adapt if other agents are outperforming significantly
+        if performance_metrics.get('relative_performance', 0) < -0.2:
+            return True
+        
+        return False
+    
+    def _determine_adaptation_strategy(self, performance):
+        """Determine which adaptation strategy to use"""
+        if performance.get('profit', 0) < -100:
+            return "conservative"  # Big losses -> become more conservative
+        elif performance.get('market_volatility', 0) > 0.8:
+            return "balanced"      # High volatility -> become more balanced
+        elif performance.get('relative_performance', 0) < -0.3:
+            return "aggressive"    # Underperforming -> become more aggressive
+        else:
+            return "balanced"      # Default to balanced
+    
+    def _apply_adaptation(self, strategy, performance_metrics):
+        """Apply adaptation strategy to current attributes"""
+        # Get new base attributes
+        new_attributes = self._get_strategy_attributes(strategy)
+        
+        # Blend with current attributes based on adaptability
+        blend_factor = self.attributes.get('adaptability', 0.5)
+        
+        for attr in self.attributes:
+            if attr in new_attributes:
+                self.attributes[attr] = self._blend_attribute(
+                    self.attributes[attr],
+                    new_attributes[attr],
+                    blend_factor
+                )
+    
+    def _get_strategy_attributes(self, strategy):
+        """Get base attributes for a strategy"""
+        if strategy == "conservative":
+            return {
+                'aggressiveness': random.uniform(0.0, 0.3),
+                'risk_tolerance': random.uniform(0.0, 0.3),
+                'patience': random.uniform(0.7, 1.0),
+                'adaptability': random.uniform(0.3, 0.6),
+                'momentum_following': random.uniform(0.2, 0.5),
+                'mean_reversion': random.uniform(0.6, 1.0)
+            }
+        elif strategy == "aggressive":
+            return {
+                'aggressiveness': random.uniform(0.7, 1.0),
+                'risk_tolerance': random.uniform(0.7, 1.0),
+                'patience': random.uniform(0.0, 0.3),
+                'adaptability': random.uniform(0.6, 1.0),
+                'momentum_following': random.uniform(0.6, 1.0),
+                'mean_reversion': random.uniform(0.0, 0.3)
+            }
+        elif strategy == "balanced":
+            return {
+                'aggressiveness': random.uniform(0.4, 0.6),
+                'risk_tolerance': random.uniform(0.4, 0.6),
+                'patience': random.uniform(0.4, 0.6),
+                'adaptability': random.uniform(0.4, 0.6),
+                'momentum_following': random.uniform(0.4, 0.6),
+                'mean_reversion': random.uniform(0.4, 0.6)
+            }
+        else:
+            return self._get_strategy_attributes("balanced")
+    
+    def _blend_attribute(self, current, target, blend_factor):
+        """Blend current and target attribute values"""
+        return current * (1 - blend_factor) + target * blend_factor
+    
+    def _calculate_performance_metrics(self):
+        """Calculate current performance metrics for adaptation decisions"""
+        current_profit = self.balance - self.starting_balance
+        
+        # Calculate market volatility (simplified)
+        if len(self.trading_history) > 1:
+            prices = [trade['price'] for trade in self.trading_history[-10:]]
+            if len(prices) > 1:
+                volatility = sum(abs(prices[i] - prices[i-1]) for i in range(1, len(prices))) / len(prices)
+                volatility = min(volatility / 100.0, 1.0)  # Normalize to 0-1
+            else:
+                volatility = 0.0
+        else:
+            volatility = 0.0
+        
+        # Calculate relative performance (simplified - would compare to other agents)
+        relative_performance = 0.0  # Placeholder
+        
+        return {
+            'profit': current_profit,
+            'market_volatility': volatility,
+            'relative_performance': relative_performance,
+            'trade_count': self.n_trades,
+            'timestamp': self.birthtime
+        }
+    
+    def get_attributes_summary(self):
+        """Get a summary of current attributes and adaptation history"""
+        if not self.attributes_initialized:
+            return {"error": "Attributes not initialized"}
+        
+        return {
+            'current_attributes': self.attributes,
+            'design_strategy': getattr(self, 'design_strategy', 'unknown'),
+            'adaptation_enabled': self.adaptation_enabled,
+            'performance_metrics': self._calculate_performance_metrics()
+        }
+    
+    def respond(self, time, lob, trade, vrbs):
+        """
+        Main trading logic for the adaptive trader
+        """
+        # Check if adaptation is needed
+        self.check_and_adapt_attributes()
+        
+        # Update belief graph if available
+        if self.belief_graph:
+            self._update_belief_graph(lob, time)
+        
+        # Update profit per time (required by BSE)
+        self.profitpertime = self.profitpertime_update(time, self.birthtime, self.balance)
+        
+        return None
+    
+    def getorder(self, time, countdown, lob):
+        """
+        Create this trader's order to be sent to the exchange.
+        """
+        # Check if adaptation is needed
+        self.check_and_adapt_attributes()
+        
+        # Check if we have customer orders to work
+        if len(self.orders) < 1:
+            return None
+        
+        # Get current market state
+        best_bid = lob['bids']['best'] if lob['bids']['n'] > 0 else None
+        best_ask = lob['asks']['best'] if lob['asks']['n'] > 0 else None
+        
+        if not best_bid or not best_ask:
+            return None
+        
+        # Get the customer order we're working
+        customer_order = self.orders[0]
+        
+        # Make trading decision based on attributes and customer order
+        decision = self._make_trading_decision(lob, time, customer_order)
+        
+        return decision
+    
+    def _update_belief_graph(self, lob, time):
+        """Update belief graph with current market state"""
+        try:
+            # Create market event for belief graph
+            if lob['bids']['n'] > 0 and lob['asks']['n'] > 0:
+                event = MarketEvent(
+                    event_id=f"update_{time}",
+                    event_type=EventType.BID,
+                    timestamp=time,
+                    agent_id=self.tid,
+                    price=lob['bids']['best'],
+                    quantity=1
+                )
+                self.belief_graph.update_beliefs(event)
+        except Exception as e:
+            print(f"Error updating belief graph: {e}")
+    
+    def _make_trading_decision(self, lob, time, customer_order):
+        """Make trading decision influenced by agent attributes and customer order"""
+        if not self.attributes_initialized:
+            return None
+        
+        best_bid = lob['bids']['best'] if lob['bids']['n'] > 0 else None
+        best_ask = lob['asks']['best'] if lob['asks']['n'] > 0 else None
+        
+        if not best_bid or not best_ask:
+            return None
+        
+        # Get current attributes
+        aggressiveness = self.attributes.get('aggressiveness', 0.5)
+        patience = self.attributes.get('patience', 0.5)
+        momentum_following = self.attributes.get('momentum_following', 0.5)
+        mean_reversion = self.attributes.get('mean_reversion', 0.5)
+        
+        # Calculate spread
+        spread = best_ask - best_bid
+        mid_price = (best_bid + best_ask) / 2
+        
+        # Get customer order details
+        customer_type = customer_order.otype
+        customer_price = customer_order.price
+        
+        # Decision logic based on attributes and customer order
+        if customer_type == 'Bid':  # Customer wants to buy
+            # Aggressive buyers bid higher
+            bid_price = best_bid + (aggressiveness * spread * 0.1)
+            
+            # Patient buyers wait for better prices
+            if patience > 0.7 and spread > 5:
+                return None  # Wait for better spread
+            
+            # Momentum followers bid higher in rising markets
+            if momentum_following > 0.7 and self._is_rising_market(lob):
+                bid_price += spread * 0.2
+            
+            # Mean reversion traders bid lower in high markets
+            if mean_reversion > 0.7 and self._is_high_market(lob):
+                bid_price -= spread * 0.1
+            
+            # Ensure we don't exceed customer's limit price
+            bid_price = min(bid_price, customer_price)
+            
+            return Order(self.tid, 'Bid', int(bid_price), 1, time, lob['QID'])
+        
+        else:  # customer_type == 'Ask' - Customer wants to sell
+            # Aggressive sellers ask lower
+            ask_price = best_ask - (aggressiveness * spread * 0.1)
+            
+            # Patient sellers wait for better prices
+            if patience > 0.7 and spread > 5:
+                return None  # Wait for better spread
+            
+            # Momentum followers ask higher in falling markets
+            if momentum_following > 0.7 and self._is_falling_market(lob):
+                ask_price += spread * 0.2
+            
+            # Mean reversion traders ask higher in low markets
+            if mean_reversion > 0.7 and self._is_low_market(lob):
+                ask_price += spread * 0.1
+            
+            # Ensure we don't go below customer's limit price
+            ask_price = max(ask_price, customer_price)
+            
+            return Order(self.tid, 'Ask', int(ask_price), 1, time, lob['QID'])
+    
+    def _is_rising_market(self, lob):
+        """Check if market is rising based on recent trades"""
+        if len(lob['tape']) < 3:
+            return False
+        
+        recent_trades = [t for t in lob['tape'][-3:] if t['type'] == 'Trade']
+        if len(recent_trades) < 2:
+            return False
+        
+        return recent_trades[-1]['price'] > recent_trades[-2]['price']
+    
+    def _is_falling_market(self, lob):
+        """Check if market is falling based on recent trades"""
+        if len(lob['tape']) < 3:
+            return False
+        
+        recent_trades = [t for t in lob['tape'][-3:] if t['type'] == 'Trade']
+        if len(recent_trades) < 2:
+            return False
+        
+        return recent_trades[-1]['price'] < recent_trades[-2]['price']
+    
+    def _is_high_market(self, lob):
+        """Check if market is at high levels"""
+        if not lob['tape']:
+            return False
+        
+        recent_trades = [t for t in lob['tape'][-5:] if t['type'] == 'Trade']
+        if len(recent_trades) < 3:
+            return False
+        
+        avg_price = sum(t['price'] for t in recent_trades) / len(recent_trades)
+        return avg_price > 300  # Arbitrary threshold
+    
+    def _is_low_market(self, lob):
+        """Check if market is at low levels"""
+        if not lob['tape']:
+            return False
+        
+        recent_trades = [t for t in lob['tape'][-5:] if t['type'] == 'Trade']
+        if len(recent_trades) < 3:
+            return False
+        
+        avg_price = sum(t['price'] for t in recent_trades) / len(recent_trades)
+        return avg_price < 200  # Arbitrary threshold
+
+
 def trade_stats(expid, traders, dumpfile, time, lob):
     """
     Dump CSV statistics on exchange data and trader population to file for later analysis.
@@ -4835,12 +5413,9 @@ def populate_market(trdrs_spec, traders, shuffle, vrbs):
             return TraderPT1('PT1', name, proptrader_balance, parameters, time0)
         elif robottype == 'PT2':
             return TraderPT2('PT2', name, proptrader_balance, parameters, time0)
-        elif robottype == 'LLM':
-            return TraderLLMProp('LLM', name, proptrader_balance, parameters, time0)
-        elif robottype == "LLMHM":
-            return TraderHMLLMProp('LLMHM', name, proptrader_balance, parameters, time0)
-        elif robottype == 'BG':
-            return TraderBeliefGraph('BG', name, proptrader_balance, parameters, time0)
+
+        elif robottype == 'ADAPTIVE':
+            return TraderAdaptive('ADAPTIVE', name, proptrader_balance, parameters, time0)
         else:
             sys.exit('FATAL: don\'t know trader type %s\n' % robottype)
 
@@ -5751,7 +6326,7 @@ if __name__ == "__main__":
         # proptraders_spec specifies strategies played by proprietary-traders, and how many of each
         proptraders_spec = [('PT1', 1, {'bid_percent': 0.95, 'ask_delta': 2, 'n_past_trades': 5}), 
                            ('PT2', 1, {'bid_percent': 0.99, 'ask_delta': 2, 'n_past_trades': 5}),
-                           ('LLM', 1), ('BG', 1), ('LLMHM', 1)]
+                           ('ADAPTIVE', 1)]
 
         # trader_spec wraps up the specifications for the buyers, sellers, and proptraders
         traders_spec = {'sellers': sellers_spec, 'buyers': buyers_spec, 'proptraders': proptraders_spec}
