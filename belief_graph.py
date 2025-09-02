@@ -536,6 +536,56 @@ class BeliefGraph:
         # Reconstruct event history
         self.event_history = [MarketEvent(**event_data) for event_data in data['event_history']]
     
+    def update_agent_attributes(self, agent_id: str, attributes: Dict[str, Any]) -> None:
+        """
+        Update agent attributes in the belief graph based on AI-designed attributes.
+        
+        This method allows the adaptive trader to update the belief graph
+        with its designed trading personality attributes.
+        """
+        if agent_id not in self.nodes:
+            self.add_agent(agent_id)
+        
+        agent_node = self.nodes[agent_id]
+        
+        # Update aggressiveness score based on AI-designed aggressiveness
+        if 'aggressiveness' in attributes:
+            # Convert from 0-1 scale to -1 to 1 scale for belief graph
+            ai_aggressiveness = attributes['aggressiveness']
+            belief_aggressiveness = (ai_aggressiveness * 2) - 1  # 0->-1, 0.5->0, 1->1
+            agent_node.aggressiveness_score = belief_aggressiveness
+        
+        # Update strategy type based on AI's design choice
+        if 'design_strategy' in attributes:
+            agent_node.strategy_type = attributes['design_strategy']
+        
+        # Update last activity timestamp
+        agent_node.last_activity = self.current_time
+        
+        # Add belief edge about the agent's strategy
+        strategy_edge = BeliefEdge(
+            edge_id=str(uuid.uuid4()),
+            source_node=self.asset_id,
+            target_node=agent_id,
+            belief_type="strategy",
+            confidence=0.9,  # High confidence since AI designed it
+            value=attributes.get('design_strategy', 'adaptive'),
+            timestamp=self.current_time
+        )
+        self.edges[strategy_edge.edge_id] = strategy_edge
+        
+        # Add belief edge about the agent's aggressiveness
+        aggressiveness_edge = BeliefEdge(
+            edge_id=str(uuid.uuid4()),
+            source_node=self.asset_id,
+            target_node=agent_id,
+            belief_type="aggressiveness",
+            confidence=0.9,  # High confidence since AI designed it
+            value=attributes.get('aggressiveness', 0.5),
+            timestamp=self.current_time
+        )
+        self.edges[aggressiveness_edge.edge_id] = aggressiveness_edge
+    
     def get_agent_beliefs(self, agent_id: str) -> Dict[str, Any]:
         """Get all beliefs about a specific agent"""
         beliefs = {}

@@ -4988,6 +4988,17 @@ Examples:
                 'momentum_following': 0.5,
                 'mean_reversion': 0.5
             }
+        
+        # Add design strategy to attributes for belief graph
+        self.attributes['design_strategy'] = strategy
+        
+        # Update belief graph with the designed attributes
+        if self.belief_graph:
+            try:
+                self.belief_graph.update_agent_attributes(self.tid, self.attributes)
+                print(f"Trader {self.tid} updated belief graph with designed attributes: {strategy}")
+            except Exception as e:
+                print(f"Error updating belief graph for trader {self.tid}: {e}")
     
     def _update_market_context(self):
         """Update market context based on current conditions"""
@@ -5068,6 +5079,17 @@ Examples:
                     new_attributes[attr],
                     blend_factor
                 )
+        
+        # Update design strategy in attributes
+        self.attributes['design_strategy'] = f"{strategy}_adapted"
+        
+        # Update belief graph with adapted attributes
+        if self.belief_graph:
+            try:
+                self.belief_graph.update_agent_attributes(self.tid, self.attributes)
+                print(f"Trader {self.tid} updated belief graph with adapted attributes: {strategy}")
+            except Exception as e:
+                print(f"Error updating belief graph for trader {self.tid}: {e}")
     
     def _get_strategy_attributes(self, strategy):
         """Get base attributes for a strategy"""
