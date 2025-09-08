@@ -69,9 +69,19 @@ if not hm_logger.handlers:
     hm_logger.addHandler(hm_handler)
     hm_logger.propagate = False  # Don't propagate to root logger
 
+# Setup separate logger for Belief Graph traders ONLY (fresh log each run)
+bg_logger = logging.getLogger('belief_graph_traders')
+bg_logger.setLevel(logging.DEBUG)
+if not bg_logger.handlers:
+    bg_handler = logging.FileHandler('belief_graph_traders.log', mode='w')  # 'w' mode overwrites existing file
+    bg_formatter = logging.Formatter('%(asctime)s - %(message)s')
+    bg_handler.setFormatter(bg_formatter)
+    bg_logger.addHandler(bg_handler)
+    bg_logger.propagate = False  # Don't propagate to root logger
+
 # LLM and belief graph imports
 import google.generativeai as genai
-from belief_graph import BeliefGraph, MarketEvent, EventType
+from belief_graph import PerfectBeliefGraph, MarketEvent, EventType
 import uuid
 import json
 import re
@@ -3095,8 +3105,8 @@ class TraderBeliefGraph(Trader):
         
         # Import belief graph components
         try:
-            from belief_graph import BeliefGraph, MarketEvent, EventType
-            self.belief_graph = BeliefGraph(asset_id="BSE_ASSET")
+            from belief_graph import PerfectBeliefGraph, MarketEvent, EventType
+            self.belief_graph = PerfectBeliefGraph(asset_id="BSE_ASSET", traders_dict=None)  # Will be set later
             self.MarketEvent = MarketEvent
             self.EventType = EventType
         except ImportError:
@@ -3128,9 +3138,9 @@ class TraderBeliefGraph(Trader):
         if self.api_key:
             genai.configure(api_key=self.api_key)
             self.model = genai.GenerativeModel(self.model_name)
-            print(f"Initialized Belief Graph trader {tid} with model {self.model_name}")
+            bg_logger.info(f"Initialized Belief Graph trader {tid} with model {self.model_name}")
         else:
-            print(f"Warning: No API key provided for Belief Graph trader {tid}")
+            bg_logger.warning(f"No API key provided for Belief Graph trader {tid}")
             self.model = None
         
         # Trading state (same as LLM trader)
@@ -3164,6 +3174,14 @@ class TraderBeliefGraph(Trader):
         
         # Debug mode
         self.debug_mode = False
+
+    def set_traders_dict(self, traders_dict):
+        """
+        Set the traders dictionary for perfect belief graph access.
+        This must be called after all traders are created.
+        """
+        if self.belief_graph is not None:
+            self.belief_graph.traders_dict = traders_dict
 
     def _update_belief_graph_from_market(self, lob, time):
         """
@@ -3272,6 +3290,32 @@ class TraderBeliefGraph(Trader):
                     competitors_text += f"Aggressiveness={comp['aggressiveness']:.2f}, "
                     competitors_text += f"Valuation≈{valuation_str} "
                     competitors_text += f"(confidence: {comp['confidence']:.2f})\n"
+        else:
+            # Fallback: extract directly from belief data if strategic insights are empty
+            competitors_text = "COMPETITOR ANALYSIS:\n"
+            competitors_found = False
+            if 'beliefs' in belief_context:
+                agents_valuations = {}
+                for belief in belief_context['beliefs']:
+                    if (belief['belief_type'] == 'valuation' and 
+                        belief['target_node'] != self.tid and 
+                        belief['value'] is not None):
+                        agent_id = belief['target_node']
+                        agents_valuations[agent_id] = {
+                            'valuation': belief['value'],
+                            'confidence': belief['confidence']
+                        }
+                
+                for agent_id, data in agents_valuations.items():
+                    valuation_str = f"${data['valuation']:.1f}"
+                    competitors_text += f"- {agent_id}: Strategy=unknown, "
+                    competitors_text += f"Aggressiveness=0.00, "
+                    competitors_text += f"Valuation≈{valuation_str} "
+                    competitors_text += f"(confidence: {data['confidence']:.2f})\n"
+                    competitors_found = True
+            
+            if not competitors_found:
+                competitors_text += "- No competitor data available\n"
         
         # Format market opportunities
         opportunities_text = ""
@@ -3527,6 +3571,7 @@ No explanation needed."""
         Get trading decision from LLM using belief graph context
         """
         if not self.model:
+            bg_logger.warning(f"[BG-NO-MODEL] {self.tid}: No LLM model available, using fallback")
             return self._fallback_decision()
         
         try:
@@ -3539,9 +3584,25 @@ No explanation needed."""
             )
             
             response_text = response.text.strip()
-            return self._parse_llm_response(response_text)
+            
+            # Log the raw LLM response
+            bg_logger.info(f"[BG-LLM-RESPONSE] {self.tid}: === RAW LLM RESPONSE ===")
+            bg_logger.info("-"*50)
+            bg_logger.info(response_text)
+            bg_logger.info("-"*50)
+            
+            parsed_decision = self._parse_llm_response(response_text)
+            
+            # Log the parsed decision
+            bg_logger.info(f"[BG-PARSED-DECISION] {self.tid}: Parsed decision:")
+            bg_logger.info(f"  Action: {parsed_decision['action']}")
+            bg_logger.info(f"  Price: {parsed_decision.get('price', 'N/A')}")
+            bg_logger.info(f"  Reasoning excerpt: {parsed_decision.get('reasoning', 'N/A')[:100]}...")
+            
+            return parsed_decision
             
         except Exception as e:
+            bg_logger.error(f"[BG-LLM-ERROR] {self.tid}: LLM API error: {e}")
             if self.debug_mode:
                 print(f"LLM API error for Belief Graph trader {self.tid}: {e}")
             return self._fallback_decision()
@@ -3619,10 +3680,69 @@ No explanation needed."""
         # Update profit per time
         self.profitpertime = self.profitpertime_update(time, self.birthtime, self.balance)
         
+        bg_logger.debug(f"[BG-RESPOND] {self.tid}: respond() called at time {time:.1f}")
+        
         # Get belief graph context and LLM decision
         belief_context = self._get_belief_graph_context(lob, time)
+        
+        # COMPREHENSIVE GRAPH VISUALIZATION LOGGING
+        if self.belief_graph:
+            bg_logger.info(f"[BG-GRAPH-VIZ] {self.tid}: === COMPLETE BELIEF GRAPH STATE AT TIME {time:.1f} ===")
+            try:
+                # Log the complete graph as JSON
+                graph_json = self.belief_graph.to_json()
+                bg_logger.info(f"[BG-GRAPH-JSON] {self.tid}:")
+                bg_logger.info("="*80)
+                bg_logger.info(graph_json)
+                bg_logger.info("="*80)
+                
+                # Also log a human-readable summary
+                market_summary = self.belief_graph.get_market_summary()
+                bg_logger.info(f"[BG-GRAPH-SUMMARY] {self.tid}: Market Summary:")
+                bg_logger.info(f"  Active Agents: {market_summary['active_agents']}")
+                bg_logger.info(f"  Total Beliefs: {market_summary['total_beliefs']}")
+                bg_logger.info(f"  Recent Events: {market_summary['recent_events']}")
+                
+                # Log beliefs about each agent
+                for node_id, node in self.belief_graph.nodes.items():
+                    if hasattr(node, 'agent_id') and node_id != self.tid:  # Skip self
+                        agent_beliefs = self.belief_graph.get_agent_beliefs(node_id)
+                        bg_logger.info(f"[BG-AGENT-BELIEFS] {self.tid}: Beliefs about {node_id}:")
+                        for belief_type, beliefs in agent_beliefs.items():
+                            for belief in beliefs:
+                                bg_logger.info(f"    {belief_type}: {belief['value']} (confidence: {belief['confidence']:.2f})")
+                
+            except Exception as e:
+                bg_logger.error(f"[BG-GRAPH-ERROR] {self.tid}: Failed to log graph visualization: {e}")
+        else:
+            bg_logger.warning(f"[BG-NO-GRAPH] {self.tid}: Belief graph not available for visualization")
+        
+        # Format the prompt with belief graph context
         prompt = self._format_belief_graph_prompt(belief_context, lob, time)
+        
+        # COMPREHENSIVE PROMPT LOGGING
+        bg_logger.info(f"[BG-PROMPT] {self.tid}: === COMPLETE LLM PROMPT AT TIME {time:.1f} ===")
+        bg_logger.info("="*80)
+        bg_logger.info(prompt)
+        bg_logger.info("="*80)
+        
+        # Get LLM decision
         decision = self._get_llm_trading_decision(prompt)
+        
+        # Log the LLM response
+        bg_logger.info(f"[BG-DECISION] {self.tid}: === LLM DECISION AT TIME {time:.1f} ===")
+        bg_logger.info(f"  Action: {decision['action']}")
+        bg_logger.info(f"  Price: {decision.get('price', 'N/A')}")
+        bg_logger.info(f"  Reasoning: {decision.get('reasoning', 'N/A')}")
+        
+        # Log market context for analysis
+        bg_logger.info(f"[BG-CONTEXT] {self.tid}: Market context at decision time:")
+        bg_logger.info(f"  Current Job: {self.job}")
+        bg_logger.info(f"  Balance: ${self.balance}")
+        bg_logger.info(f"  Inventory: {self.inventory}")
+        bg_logger.info(f"  Best Bid: {lob['bids']['best'] if lob['bids']['n'] > 0 else 'None'}")
+        bg_logger.info(f"  Best Ask: {lob['asks']['best'] if lob['asks']['n'] > 0 else 'None'}")
+        bg_logger.info(f"  Last Purchase Price: {self.last_purchase_price}")
         
         # Log the decision
         self.trading_history.append({
@@ -3636,10 +3756,15 @@ No explanation needed."""
             self.trading_history = self.trading_history[-self.max_history:]
 
         # Act on the decision
+        bg_logger.debug(f"[BG-EXECUTE] {self.tid}: Executing decision - job={self.job}, decision={decision['action']}")
         if decision['action'] == 'BUY' and self.job == 'Buy':
+            bg_logger.debug(f"[BG-BUY-EXECUTE] {self.tid}: Executing BUY decision at price {decision.get('price', 'N/A')}")
             self._execute_buy_decision(decision, lob, time)
         elif decision['action'] == 'SELL' and self.job == 'Sell':
+            bg_logger.debug(f"[BG-SELL-EXECUTE] {self.tid}: Executing SELL decision at price {decision.get('price', 'N/A')}")
             self._execute_sell_decision(decision, lob, time)
+        else:
+            bg_logger.debug(f"[BG-NO-ACTION] {self.tid}: No action taken - job={self.job}, decision={decision['action']}")
 
     def _execute_buy_decision(self, decision, lob, time):
         """
@@ -3695,7 +3820,8 @@ No explanation needed."""
             self.inventory = 1
             self.job = 'Sell'  # Switch to selling mode
             
-            print(f"🧠 Belief Graph Trader BOUGHT at ${transactionprice} | Balance: ${self.balance}")
+            bg_logger.info(f"📦 BG Trader BOUGHT at ${transactionprice} | Balance: ${self.balance}")
+            print(f"🧠 Belief Graph Trader {self.tid} BOUGHT at ${transactionprice} | Balance: ${self.balance}")
             
             # Log the state change
             self.trading_history.append({
@@ -3719,10 +3845,12 @@ No explanation needed."""
                 else:
                     self.failed_trades += 1
                     emoji = "🔴"
-                print(f"{emoji} Belief Graph Trader SOLD at ${transactionprice} | Profit: ${profit} | Total Profit: ${self.total_profit:.2f}")
+                bg_logger.info(f"{emoji} BG Trader SOLD at ${transactionprice} | Profit: ${profit} | Total Profit: ${self.total_profit:.2f}")
+                print(f"{emoji} Belief Graph Trader {self.tid} SOLD at ${transactionprice} | Profit: ${profit} | Total Profit: ${self.total_profit:.2f}")
             else:
                 profit = 0
-                print(f"🔴 Belief Graph Trader SOLD at ${transactionprice} | No purchase price recorded")
+                bg_logger.info(f"🔴 BG Trader SOLD at ${transactionprice} | No purchase price recorded")
+                print(f"🔴 Belief Graph Trader {self.tid} SOLD at ${transactionprice} | No purchase price recorded")
             
             self.inventory = 0
             self.last_purchase_price = None
@@ -5382,6 +5510,11 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     # create a bunch of traders
     traders = {}
     trader_stats = populate_market(trader_spec, traders, True, populate_verbose)
+
+    # Set traders_dict for PerfectBeliefGraph traders
+    for tid, trader in traders.items():
+        if hasattr(trader, 'set_traders_dict') and callable(trader.set_traders_dict):
+            trader.set_traders_dict(traders)
 
     # timestep set so that can process all traders in one second
     # NB minimum interarrival time of customer orders may be much less than this!!
