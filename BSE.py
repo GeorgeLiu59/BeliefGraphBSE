@@ -3109,7 +3109,7 @@ class TraderBeliefGraph(Trader):
         self.api_key = None
         self.model_name = 'gemini-2.0-flash-lite'
         self.temperature = 0.3  # Same as LLM trader
-        self.max_tokens = 500   # Same as LLM trader
+        self.max_tokens = 2000  # Increased for proper CoT reasoning
         
         # Parse LLM parameters if provided
         if params is not None:
@@ -3256,7 +3256,100 @@ class TraderBeliefGraph(Trader):
         # Query belief graph for decision context
         belief_context = self.belief_graph.query_action(self.tid, current_market_state)
         
+        # Add natural language graph insights
+        belief_context['natural_language_insights'] = self._generate_natural_language_insights()
+        
         return belief_context
+
+    def _generate_natural_language_insights(self):
+        """
+        Convert the belief graph JSON into natural language insights for the LLM
+        """
+        if not self.belief_graph:
+            return "No belief graph available."
+        
+        insights = []
+        
+        # Get all agent nodes (excluding asset node)
+        agents = {k: v for k, v in self.belief_graph.nodes.items() 
+                 if hasattr(v, 'agent_id') and v.agent_id != self.belief_graph.asset_id}
+        
+        if not agents:
+            return "No other agents observed yet."
+        
+        # Analyze trading patterns
+        insights.append("=== MARKET BEHAVIOR ANALYSIS ===")
+        
+        # Group agents by strategy
+        aggressive_agents = []
+        passive_agents = []
+        neutral_agents = []
+        
+        for agent_id, node in agents.items():
+            if node.strategy_type == "aggressive":
+                aggressive_agents.append((agent_id, node))
+            elif node.strategy_type == "passive":
+                passive_agents.append((agent_id, node))
+            else:
+                neutral_agents.append((agent_id, node))
+        
+        # Strategy insights
+        if aggressive_agents:
+            insights.append(f"AGGRESSIVE TRADERS ({len(aggressive_agents)}): These agents tend to pay premium prices or accept lower selling prices to execute trades quickly.")
+            for agent_id, node in aggressive_agents:
+                insights.append(f"  • {agent_id}: Last traded at ${node.last_trade_price}, values asset around ${node.inferred_valuation} (confidence: {node.valuation_confidence:.0%})")
+        
+        if passive_agents:
+            insights.append(f"PASSIVE TRADERS ({len(passive_agents)}): These agents wait for better prices and are more patient.")
+            for agent_id, node in passive_agents:
+                insights.append(f"  • {agent_id}: Last traded at ${node.last_trade_price}, values asset around ${node.inferred_valuation} (confidence: {node.valuation_confidence:.0%})")
+        
+        if neutral_agents:
+            insights.append(f"NEUTRAL TRADERS ({len(neutral_agents)}): These agents trade at market prices without strong urgency.")
+            for agent_id, node in neutral_agents:
+                insights.append(f"  • {agent_id}: Last traded at ${node.last_trade_price}, values asset around ${node.inferred_valuation} (confidence: {node.valuation_confidence:.0%})")
+        
+        # Price analysis
+        insights.append("\n=== VALUATION PATTERNS ===")
+        valuations = [(node.inferred_valuation, agent_id, node.strategy_type) 
+                     for agent_id, node in agents.items() 
+                     if node.inferred_valuation is not None]
+        
+        if valuations:
+            valuations.sort(reverse=True)  # Highest to lowest
+            highest_val = valuations[0]
+            lowest_val = valuations[-1]
+            
+            insights.append(f"Highest valuation: {highest_val[1]} values at ${highest_val[0]} (strategy: {highest_val[2]})")
+            insights.append(f"Lowest valuation: {lowest_val[1]} values at ${lowest_val[0]} (strategy: {lowest_val[2]})")
+            
+            avg_val = sum(v[0] for v in valuations) / len(valuations)
+            insights.append(f"Average market valuation: ${avg_val:.1f}")
+        
+        # Temporal insights from event history
+        if hasattr(self.belief_graph, 'event_history') and self.belief_graph.event_history:
+            insights.append("\n=== RECENT TRADING SEQUENCE ===")
+            recent_events = self.belief_graph.event_history[-5:]  # Last 5 events
+            
+            for i, event in enumerate(recent_events):
+                if event.agent_id in agents:
+                    agent_node = agents[event.agent_id]
+                    insights.append(f"{i+1}. {event.agent_id} ({agent_node.strategy_type}) traded at ${event.price}")
+        
+        # Strategic recommendations
+        insights.append("\n=== STRATEGIC INSIGHTS ===")
+        
+        if aggressive_agents and passive_agents:
+            avg_aggressive_price = sum(node.last_trade_price for _, node in aggressive_agents) / len(aggressive_agents)
+            avg_passive_price = sum(node.last_trade_price for _, node in passive_agents) / len(passive_agents)
+            
+            if avg_aggressive_price > avg_passive_price:
+                insights.append(f"Aggressive traders are paying ${avg_aggressive_price - avg_passive_price:.1f} more on average than passive traders.")
+                insights.append("This suggests there may be opportunities to be more patient and get better prices.")
+            else:
+                insights.append("Aggressive and passive traders are getting similar prices, suggesting a balanced market.")
+        
+        return "\n".join(insights)
 
     def _format_belief_graph_prompt(self, belief_context, lob, time):
         """
@@ -3283,6 +3376,11 @@ class TraderBeliefGraph(Trader):
                     competitors_text += f"Aggressiveness={comp['aggressiveness']:.2f}, "
                     competitors_text += f"Valuation≈{valuation_str} "
                     competitors_text += f"(confidence: {comp['confidence']:.2f})\n"
+        
+        # Add natural language insights from belief graph
+        natural_insights = ""
+        if belief_context.get('natural_language_insights'):
+            natural_insights = f"\nBELIEF GRAPH INSIGHTS:\n{belief_context['natural_language_insights']}\n"
         
         # Format market opportunities
         opportunities_text = ""
@@ -3328,7 +3426,7 @@ MARKET STATE:
 {competitors_text}
 {opportunities_text}
 {risks_text}
-
+{natural_insights}
 YOUR PERFORMANCE:
 - Total Profit: ${self.total_profit:.2f}
 - Successful Trades: {self.successful_trades}
@@ -3390,7 +3488,7 @@ MARKET STATE:
 {competitors_text}
 {opportunities_text}
 {risks_text}
-
+{natural_insights}
 YOUR PERFORMANCE:
 - Total Profit: ${self.total_profit:.2f}
 - Successful Trades: {self.successful_trades}
