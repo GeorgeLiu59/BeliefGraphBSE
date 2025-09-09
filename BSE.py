@@ -56,6 +56,7 @@ import random
 import os
 import time as chrono
 import csv
+import logging
 from datetime import datetime
 
 # LLM and belief graph imports
@@ -3063,6 +3064,16 @@ No explanation needed."""
             'recent_trades': recent_trades
         }
 
+# Setup separate logger for Belief Graph traders ONLY (fresh log each run)
+bg_logger = logging.getLogger('belief_graph_traders')
+bg_logger.setLevel(logging.DEBUG)
+if not bg_logger.handlers:
+    bg_handler = logging.FileHandler('belief_graph_traders.log', mode='w')  # 'w' mode overwrites existing file
+    bg_formatter = logging.Formatter('%(asctime)s - %(message)s')
+    bg_handler.setFormatter(bg_formatter)
+    bg_logger.addHandler(bg_handler)
+    bg_logger.propagate = False  # Don't propagate to root logger
+
 # Belief Graph Trader Class
 class TraderBeliefGraph(Trader):
     """
@@ -3117,9 +3128,9 @@ class TraderBeliefGraph(Trader):
         if self.api_key:
             genai.configure(api_key=self.api_key)
             self.model = genai.GenerativeModel(self.model_name)
-            print(f"Initialized Belief Graph trader {tid} with model {self.model_name}")
+            bg_logger.info(f"Initialized Belief Graph trader {tid} with model {self.model_name}")
         else:
-            print(f"Warning: No API key provided for Belief Graph trader {tid}")
+            bg_logger.warning(f"No API key provided for Belief Graph trader {tid}")
             self.model = None
         
         # Trading state (same as LLM trader)
@@ -3181,14 +3192,21 @@ class TraderBeliefGraph(Trader):
         if not self.belief_graph:
             return
         
+        # DEBUG: Log raw event data from BSE
+        bg_logger.debug(f"[BG-RAW-EVENT] {self.tid}: Processing raw event: {event}")
+        
         # Determine event type
         if event['type'] == 'Trade':
             event_type = self.EventType.TRADE
+            bg_logger.debug(f"[BG-EVENT-TYPE] {self.tid}: Detected TRADE event")
         elif event['type'] == 'Bid':
             event_type = self.EventType.BID
+            bg_logger.debug(f"[BG-EVENT-TYPE] {self.tid}: Detected BID event")
         elif event['type'] == 'Ask':
             event_type = self.EventType.ASK
+            bg_logger.debug(f"[BG-EVENT-TYPE] {self.tid}: Detected ASK event")
         else:
+            bg_logger.debug(f"[BG-EVENT-SKIP] {self.tid}: Skipping unknown event type: {event['type']}")
             return  # Skip other event types
         
         # Create market event for belief graph
@@ -3202,8 +3220,12 @@ class TraderBeliefGraph(Trader):
             counterparty_id=event.get('party2')
         )
         
+        # DEBUG: Log parsed market event
+        bg_logger.debug(f"[BG-PARSED-EVENT] {self.tid}: Created MarketEvent - Type: {event_type.value}, Agent: {market_event.agent_id}, Price: {market_event.price}")
+        
         # Update belief graph
         self.belief_graph.update_beliefs(market_event)
+        bg_logger.debug(f"[BG-UPDATED] {self.tid}: Belief graph updated with {event_type.value} event")
 
     def _get_belief_graph_context(self, lob, time):
         """
@@ -3349,11 +3371,9 @@ STRATEGIC CONSIDERATIONS:
 - Consider market opportunities and risk factors in your decision
 - Balance immediate execution vs. waiting for better prices
 
-Respond with ONLY:
-"BUY [exact_price]" - to place a bid at that price
-"WAIT" - to wait for better conditions
+Think step by step about this trading decision. Use your belief graph insights, market analysis, and trading principles to reason through your choice.
 
-No explanation needed."""
+Final decision: BUY [exact_price] or WAIT"""
         
         elif self.job == 'Sell':
             prompt = f"""You are a sophisticated proprietary trader using a belief graph to model other agents' behaviors and market dynamics.
@@ -3425,11 +3445,9 @@ STRATEGIC CONSIDERATIONS:
 - Balance profit maximization vs. execution certainty
 - Use belief graph insights to optimize timing and pricing
 
-Respond with ONLY:
-"SELL [exact_price]" - to place an ask at that price
-"WAIT" - to wait for better conditions
+Think step by step about this selling decision. Use your belief graph insights, profit analysis, and trading principles to reason through your choice.
 
-No explanation needed."""
+Final decision: SELL [exact_price] or WAIT"""
         
         else:
             return self._fallback_decision()
@@ -3537,11 +3555,23 @@ No explanation needed."""
 
     def _parse_llm_response(self, response_text):
         """
-        Parse LLM response into actionable decision
+        Parse LLM response with CoT into actionable decision
         """
         response_upper = response_text.upper()
         
         import re
+        
+        # Extract natural Chain of Thought reasoning
+        # Look for decision line and capture everything before it as reasoning
+        decision_pattern = r'(.*?)(?:Final decision:|DECISION:|BUY|SELL|WAIT)'
+        reasoning_match = re.search(decision_pattern, response_text, re.DOTALL | re.IGNORECASE)
+        
+        natural_reasoning = ""
+        if reasoning_match:
+            natural_reasoning = reasoning_match.group(1).strip()
+        else:
+            # If no clear decision marker, use the whole response as reasoning
+            natural_reasoning = response_text
         
         # Check for explicit BUY command with price
         buy_match = re.search(r'BUY\s+(\d+)', response_upper)
@@ -3551,7 +3581,8 @@ No explanation needed."""
             return {
                 'action': 'BUY',
                 'price': price,
-                'reasoning': response_text
+                'reasoning': response_text,
+                'natural_cot': natural_reasoning
             }
         
         # Check for explicit SELL command with price
@@ -3562,14 +3593,16 @@ No explanation needed."""
             return {
                 'action': 'SELL',
                 'price': price,
-                'reasoning': response_text
+                'reasoning': response_text,
+                'natural_cot': natural_reasoning
             }
         
         # Default to WAIT
         return {
             'action': 'WAIT',
             'price': None,
-            'reasoning': response_text
+            'reasoning': response_text,
+            'natural_cot': natural_reasoning
         }
 
     def _fallback_decision(self):
@@ -3608,10 +3641,58 @@ No explanation needed."""
         # Update profit per time
         self.profitpertime = self.profitpertime_update(time, self.birthtime, self.balance)
         
+        bg_logger.debug(f"[BG-RESPOND] {self.tid}: respond() called at time {time:.1f}")
+        
         # Get belief graph context and LLM decision
         belief_context = self._get_belief_graph_context(lob, time)
+        
+        # COMPREHENSIVE GRAPH VISUALIZATION LOGGING
+        if self.belief_graph:
+            bg_logger.info(f"[BG-GRAPH-VIZ] {self.tid}: === COMPLETE BELIEF GRAPH STATE AT TIME {time:.1f} ===")
+            try:
+                # Log the complete graph as JSON
+                graph_json = self.belief_graph.to_json()
+                bg_logger.info(f"[BG-GRAPH-JSON] {self.tid}:")
+                bg_logger.info("="*80)
+                bg_logger.info(graph_json)
+                bg_logger.info("="*80)
+                
+            except Exception as e:
+                bg_logger.error(f"[BG-GRAPH-ERROR] {self.tid}: Failed to log graph visualization: {e}")
+        else:
+            bg_logger.warning(f"[BG-NO-GRAPH] {self.tid}: Belief graph not available for visualization")
+        
+        # Format the prompt with belief graph context
         prompt = self._format_belief_graph_prompt(belief_context, lob, time)
+        
+        # COMPREHENSIVE PROMPT LOGGING
+        bg_logger.info(f"[BG-PROMPT] {self.tid}: === COMPLETE LLM PROMPT AT TIME {time:.1f} ===")
+        bg_logger.info("="*80)
+        bg_logger.info(prompt)
+        bg_logger.info("="*80)
+        
+        # Get LLM decision
         decision = self._get_llm_trading_decision(prompt)
+        
+        # Log the LLM response
+        bg_logger.info(f"[BG-DECISION] {self.tid}: === LLM DECISION AT TIME {time:.1f} ===")
+        bg_logger.info(f"  Action: {decision['action']}")
+        bg_logger.info(f"  Price: {decision.get('price', 'N/A')}")
+        bg_logger.info(f"  Reasoning: {decision.get('reasoning', 'N/A')}")
+        
+        # Log Chain of Thought analysis if available
+        if 'natural_cot' in decision and decision['natural_cot']:
+            bg_logger.info(f"[BG-COT] {self.tid}: === CHAIN OF THOUGHT REASONING ===")
+            bg_logger.info(f"[BG-COT-REASONING] {self.tid}: {decision['natural_cot']}")
+        
+        # Log market context for analysis
+        bg_logger.info(f"[BG-CONTEXT] {self.tid}: Market context at decision time:")
+        bg_logger.info(f"  Current Job: {self.job}")
+        bg_logger.info(f"  Balance: ${self.balance}")
+        bg_logger.info(f"  Inventory: {self.inventory}")
+        bg_logger.info(f"  Best Bid: {lob['bids']['best'] if lob['bids']['n'] > 0 else 'None'}")
+        bg_logger.info(f"  Best Ask: {lob['asks']['best'] if lob['asks']['n'] > 0 else 'None'}")
+        bg_logger.info(f"  Last Purchase Price: {self.last_purchase_price}")
         
         # Log the decision
         self.trading_history.append({
@@ -3625,10 +3706,15 @@ No explanation needed."""
             self.trading_history = self.trading_history[-self.max_history:]
 
         # Act on the decision
+        bg_logger.debug(f"[BG-EXECUTE] {self.tid}: Executing decision - job={self.job}, decision={decision['action']}")
         if decision['action'] == 'BUY' and self.job == 'Buy':
+            bg_logger.debug(f"[BG-BUY-EXECUTE] {self.tid}: Executing BUY decision at price {decision.get('price', 'N/A')}")
             self._execute_buy_decision(decision, lob, time)
         elif decision['action'] == 'SELL' and self.job == 'Sell':
+            bg_logger.debug(f"[BG-SELL-EXECUTE] {self.tid}: Executing SELL decision at price {decision.get('price', 'N/A')}")
             self._execute_sell_decision(decision, lob, time)
+        else:
+            bg_logger.debug(f"[BG-NO-ACTION] {self.tid}: No action taken - job={self.job}, decision={decision['action']}")
 
     def _execute_buy_decision(self, decision, lob, time):
         """
@@ -3684,7 +3770,8 @@ No explanation needed."""
             self.inventory = 1
             self.job = 'Sell'  # Switch to selling mode
             
-            print(f"🧠 Belief Graph Trader BOUGHT at ${transactionprice} | Balance: ${self.balance}")
+            bg_logger.info(f"📦 BG Trader BOUGHT at ${transactionprice} | Balance: ${self.balance}")
+            print(f"🧠 Belief Graph Trader {self.tid} BOUGHT at ${transactionprice} | Balance: ${self.balance}")
             
             # Log the state change
             self.trading_history.append({
@@ -3708,10 +3795,12 @@ No explanation needed."""
                 else:
                     self.failed_trades += 1
                     emoji = "🔴"
-                print(f"{emoji} Belief Graph Trader SOLD at ${transactionprice} | Profit: ${profit} | Total Profit: ${self.total_profit:.2f}")
+                bg_logger.info(f"{emoji} BG Trader SOLD at ${transactionprice} | Profit: ${profit} | Total Profit: ${self.total_profit:.2f}")
+                print(f"{emoji} Belief Graph Trader {self.tid} SOLD at ${transactionprice} | Profit: ${profit} | Total Profit: ${self.total_profit:.2f}")
             else:
                 profit = 0
-                print(f"🔴 Belief Graph Trader SOLD at ${transactionprice} | No purchase price recorded")
+                bg_logger.info(f"🔴 BG Trader SOLD at ${transactionprice} | No purchase price recorded")
+                print(f"🔴 Belief Graph Trader {self.tid} SOLD at ${transactionprice} | No purchase price recorded")
             
             self.inventory = 0
             self.last_purchase_price = None

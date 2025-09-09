@@ -248,6 +248,7 @@ class BeliefGraph:
     
     def _update_beliefs_from_bid(self, event: MarketEvent) -> None:
         """Update beliefs based on a bid event"""
+        print(f"[BG-DEBUG] _update_beliefs_from_bid called for agent {event.agent_id} at price {event.price}")
         if not event.agent_id or event.price is None:
             return
             
@@ -270,6 +271,7 @@ class BeliefGraph:
     
     def _update_beliefs_from_ask(self, event: MarketEvent) -> None:
         """Update beliefs based on an ask event"""
+        print(f"[BG-DEBUG] _update_beliefs_from_ask called for agent {event.agent_id} at price {event.price}")
         if not event.agent_id or event.price is None:
             return
             
@@ -292,6 +294,7 @@ class BeliefGraph:
     
     def _update_beliefs_from_trade(self, event: MarketEvent) -> None:
         """Update beliefs based on a trade event"""
+        print(f"[BG-DEBUG] _update_beliefs_from_trade called for agent {event.agent_id} at price {event.price}")
         if not event.agent_id or event.price is None:
             return
             
@@ -303,6 +306,9 @@ class BeliefGraph:
         
         # Update valuation belief with high confidence (actual trade)
         self._update_valuation_belief(event.agent_id, event.price, "trade", high_confidence=True)
+        
+        # Update strategy belief based on trade
+        self._update_strategy_belief(event.agent_id, "trade", event.price)
         
         # Update asset state
         self.asset_node.last_trade_price = event.price
@@ -365,6 +371,11 @@ class BeliefGraph:
             valuation_edge.confidence = new_confidence
             valuation_edge.timestamp = self.current_time
             valuation_edge.evidence_count += 1
+            
+            # Sync the agent node's valuation fields
+            agent_node = self.nodes[agent_id]
+            agent_node.inferred_valuation = new_value
+            agent_node.valuation_confidence = new_confidence
     
     def _update_strategy_belief(self, agent_id: str, action_type: str, price: float) -> None:
         """Update the belief about an agent's strategy"""
@@ -383,7 +394,7 @@ class BeliefGraph:
         # Simple strategy classification based on behavior patterns
         agent_node = self.nodes[agent_id]
         
-        if agent_node.total_trades > 5:
+        if agent_node.total_trades > 0:
             # Classify based on trading patterns
             if agent_node.aggressiveness_score > 0.5:
                 strategy = "aggressive"
@@ -396,6 +407,9 @@ class BeliefGraph:
             strategy_edge.confidence = min(self.max_confidence, strategy_edge.confidence + 0.1)
             strategy_edge.timestamp = self.current_time
             strategy_edge.evidence_count += 1
+            
+            # Sync the agent node's strategy_type field
+            agent_node.strategy_type = strategy
     
     def _update_asset_state(self) -> None:
         """Update the asset node state based on current market conditions"""
