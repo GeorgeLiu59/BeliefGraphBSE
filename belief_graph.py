@@ -248,7 +248,6 @@ class BeliefGraph:
     
     def _update_beliefs_from_bid(self, event: MarketEvent) -> None:
         """Update beliefs based on a bid event"""
-        print(f"[BG-DEBUG] _update_beliefs_from_bid called for agent {event.agent_id} at price {event.price}")
         if not event.agent_id or event.price is None:
             return
             
@@ -258,20 +257,9 @@ class BeliefGraph:
         
         # Update valuation belief
         self._update_valuation_belief(event.agent_id, event.price, "bid")
-        
-        # Update aggressiveness score
-        if self.asset_node.current_best_bid is not None:
-            if event.price > self.asset_node.current_best_bid:
-                agent_node.aggressiveness_score = min(1.0, agent_node.aggressiveness_score + 0.1)
-            else:
-                agent_node.aggressiveness_score = max(-1.0, agent_node.aggressiveness_score - 0.05)
-        
-        # Update strategy belief
-        self._update_strategy_belief(event.agent_id, "bid", event.price)
     
     def _update_beliefs_from_ask(self, event: MarketEvent) -> None:
         """Update beliefs based on an ask event"""
-        print(f"[BG-DEBUG] _update_beliefs_from_ask called for agent {event.agent_id} at price {event.price}")
         if not event.agent_id or event.price is None:
             return
             
@@ -281,16 +269,6 @@ class BeliefGraph:
         
         # Update valuation belief
         self._update_valuation_belief(event.agent_id, event.price, "ask")
-        
-        # Update aggressiveness score
-        if self.asset_node.current_best_ask is not None:
-            if event.price < self.asset_node.current_best_ask:
-                agent_node.aggressiveness_score = min(1.0, agent_node.aggressiveness_score + 0.1)
-            else:
-                agent_node.aggressiveness_score = max(-1.0, agent_node.aggressiveness_score - 0.05)
-        
-        # Update strategy belief
-        self._update_strategy_belief(event.agent_id, "ask", event.price)
     
     def _update_beliefs_from_trade(self, event: MarketEvent) -> None:
         """Update beliefs based on a trade event"""
@@ -299,6 +277,7 @@ class BeliefGraph:
             return
             
         agent_node = self.nodes[event.agent_id]
+        old_aggr = agent_node.aggressiveness_score
         agent_node.last_trade_price = event.price
         agent_node.total_trades += 1
         agent_node.total_volume += event.quantity or 1
@@ -307,8 +286,63 @@ class BeliefGraph:
         # Update valuation belief with high confidence (actual trade)
         self._update_valuation_belief(event.agent_id, event.price, "trade", high_confidence=True)
         
+        # Update aggressiveness based on trade price compared to previous trades
+        if self.asset_node.last_trade_price and agent_node.total_trades > 1:
+            price_ratio = event.price / self.asset_node.last_trade_price
+            print(f"[BG-TRADE-AGGR] Agent {event.agent_id}: price={event.price}, last_price={self.asset_node.last_trade_price}, ratio={price_ratio:.3f}")
+            
+            # Buyer perspective (assuming agent_id is buyer in BSE)
+            if price_ratio > 1.01:  # Paid >1% more than last trade
+                agent_node.aggressiveness_score = min(1.0, agent_node.aggressiveness_score + 0.3)
+                print(f"[BG-TRADE-AGGR] AGGRESSIVE buyer: paid {price_ratio-1:.1%} more")
+            elif price_ratio < 0.99:  # Paid <1% less than last trade  
+                agent_node.aggressiveness_score = max(-1.0, agent_node.aggressiveness_score - 0.2)
+                print(f"[BG-TRADE-AGGR] PASSIVE buyer: paid {1-price_ratio:.1%} less")
+            else:
+                # Near market price - slight shift toward passive
+                agent_node.aggressiveness_score = max(-1.0, agent_node.aggressiveness_score - 0.05)
+                print(f"[BG-TRADE-AGGR] NEUTRAL trade")
+        else:
+            # First trade - random initial aggressiveness
+            import random
+            agent_node.aggressiveness_score = random.uniform(-0.3, 0.3)
+            print(f"[BG-TRADE-AGGR] First trade, random initial aggr={agent_node.aggressiveness_score:.3f}")
+        
+        print(f"[BG-TRADE-AGGR] Agent {event.agent_id} aggr: {old_aggr:.3f} -> {agent_node.aggressiveness_score:.3f}")
+        
         # Update strategy belief based on trade
         self._update_strategy_belief(event.agent_id, "trade", event.price)
+        
+        # Also update counterparty if available
+        if event.counterparty_id and event.counterparty_id in self.nodes:
+            seller_node = self.nodes[event.counterparty_id]
+            old_seller_aggr = seller_node.aggressiveness_score
+            seller_node.last_trade_price = event.price
+            seller_node.total_trades += 1
+            seller_node.total_volume += event.quantity or 1
+            
+            # Seller perspective - opposite of buyer
+            if self.asset_node.last_trade_price and seller_node.total_trades > 1:
+                price_ratio = event.price / self.asset_node.last_trade_price
+                
+                if price_ratio < 0.99:  # Sold <1% below last trade
+                    seller_node.aggressiveness_score = min(1.0, seller_node.aggressiveness_score + 0.3)
+                    print(f"[BG-TRADE-AGGR] AGGRESSIVE seller {event.counterparty_id}: sold {1-price_ratio:.1%} below")
+                elif price_ratio > 1.01:  # Sold >1% above last trade
+                    seller_node.aggressiveness_score = max(-1.0, seller_node.aggressiveness_score - 0.2)
+                    print(f"[BG-TRADE-AGGR] PASSIVE seller {event.counterparty_id}: sold {price_ratio-1:.1%} above")
+                else:
+                    seller_node.aggressiveness_score = max(-1.0, seller_node.aggressiveness_score - 0.05)
+            else:
+                # First trade - random initial
+                import random
+                seller_node.aggressiveness_score = random.uniform(-0.3, 0.3)
+                
+            print(f"[BG-TRADE-AGGR] Seller {event.counterparty_id} aggr: {old_seller_aggr:.3f} -> {seller_node.aggressiveness_score:.3f}")
+            
+            # Update seller strategy
+            self._update_valuation_belief(event.counterparty_id, event.price, "trade", high_confidence=True)
+            self._update_strategy_belief(event.counterparty_id, "trade", event.price)
         
         # Update asset state
         self.asset_node.last_trade_price = event.price
@@ -379,6 +413,8 @@ class BeliefGraph:
     
     def _update_strategy_belief(self, agent_id: str, action_type: str, price: float) -> None:
         """Update the belief about an agent's strategy"""
+        print(f"[BG-STRAT-START] Updating strategy for {agent_id}, action={action_type}, price={price}")
+        
         # Find existing strategy edge
         strategy_edge = None
         for edge in self.edges.values():
@@ -389,27 +425,36 @@ class BeliefGraph:
                 break
         
         if strategy_edge is None:
+            print(f"[BG-STRAT-ERROR] No strategy edge found for {agent_id}")
             return
         
         # Simple strategy classification based on behavior patterns
         agent_node = self.nodes[agent_id]
         
-        if agent_node.total_trades > 0:
-            # Classify based on trading patterns
-            if agent_node.aggressiveness_score > 0.5:
-                strategy = "aggressive"
-            elif agent_node.aggressiveness_score < -0.5:
-                strategy = "passive"
-            else:
-                strategy = "neutral"
-            
-            strategy_edge.value = strategy
-            strategy_edge.confidence = min(self.max_confidence, strategy_edge.confidence + 0.1)
-            strategy_edge.timestamp = self.current_time
-            strategy_edge.evidence_count += 1
-            
-            # Sync the agent node's strategy_type field
-            agent_node.strategy_type = strategy
+        print(f"[BG-STRAT-INFO] Agent {agent_id}: trades={agent_node.total_trades}, aggr_score={agent_node.aggressiveness_score:.3f}, current_strategy={agent_node.strategy_type}")
+        
+        # Always classify based on aggressiveness, even if no trades yet
+        old_strategy = agent_node.strategy_type
+        
+        # Use more sensitive thresholds
+        if agent_node.aggressiveness_score > 0.15:
+            strategy = "aggressive"
+        elif agent_node.aggressiveness_score < -0.15:
+            strategy = "passive"
+        else:
+            strategy = "neutral"
+        
+        print(f"[BG-STRAT-CLASSIFY] Agent {agent_id}: aggr={agent_node.aggressiveness_score:.3f} -> strategy={strategy} (was {old_strategy})")
+        
+        strategy_edge.value = strategy
+        strategy_edge.confidence = min(self.max_confidence, strategy_edge.confidence + 0.1)
+        strategy_edge.timestamp = self.current_time
+        strategy_edge.evidence_count += 1
+        
+        # Sync the agent node's strategy_type field
+        agent_node.strategy_type = strategy
+        
+        print(f"[BG-STRAT-END] Agent {agent_id} strategy updated to {strategy} (confidence={strategy_edge.confidence:.2f})")
     
     def _update_asset_state(self) -> None:
         """Update the asset node state based on current market conditions"""
