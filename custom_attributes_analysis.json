@@ -1,0 +1,188 @@
+{
+  "summary": {
+    "total_market_conditions": 3,
+    "total_attributes": 12,
+    "unique_attribute_names": 12,
+    "average_attributes_per_condition": 4.0,
+    "overall_average_value": 0.7333333333333334,
+    "overall_value_range": [
+      0.4,
+      0.9
+    ],
+    "overall_standard_deviation": 0.16696942198734438
+  },
+  "market_conditions": [
+    {
+      "market_condition": "Low Volatility, Sideways",
+      "attribute_count": 4,
+      "attributes": [
+        {
+          "name": "range_identification",
+          "value": 0.9,
+          "description": "The ability to identify and define price ranges"
+        },
+        {
+          "name": "mean_reversion_bias",
+          "value": 0.8,
+          "description": "The tendency to believe prices will revert to their average"
+        },
+        {
+          "name": "patience_level",
+          "value": 0.7,
+          "description": "The willingness to wait for optimal entry and exit points within the range"
+        },
+        {
+          "name": "liquidity_optimization",
+          "value": 0.9,
+          "description": "The focus on using larger order sizes to exploit the high liquidity"
+        }
+      ],
+      "average_value": 0.825,
+      "value_range": [
+        0.7,
+        0.9
+      ],
+      "standard_deviation": 0.09574271077563384
+    },
+    {
+      "market_condition": "High Volatility, Upward",
+      "attribute_count": 4,
+      "attributes": [
+        {
+          "name": "trend_following",
+          "value": 0.9,
+          "description": "Reliance on identifying and trading with the prevailing upward price trend"
+        },
+        {
+          "name": "volatility_absorption",
+          "value": 0.7,
+          "description": "My ability to withstand price fluctuations"
+        },
+        {
+          "name": "entry_precision",
+          "value": 0.6,
+          "description": "The importance placed on exact timing"
+        },
+        {
+          "name": "competition_awareness",
+          "value": 0.4,
+          "description": "How I factor in other traders' behavior"
+        }
+      ],
+      "average_value": 0.65,
+      "value_range": [
+        0.4,
+        0.9
+      ],
+      "standard_deviation": 0.20816659994661327
+    },
+    {
+      "market_condition": "Extreme Volatility, Strong Upward",
+      "attribute_count": 4,
+      "attributes": [
+        {
+          "name": "momentum_aggressiveness",
+          "value": 0.9,
+          "description": "The degree to which I exploit upward momentum"
+        },
+        {
+          "name": "profit_taking_threshold",
+          "value": 0.5,
+          "description": "The level at which I'm willing to take profits"
+        },
+        {
+          "name": "volatility_adaptation",
+          "value": 0.7,
+          "description": "How quickly I adjust to changing market volatility"
+        },
+        {
+          "name": "liquidity_reliance",
+          "value": 0.8,
+          "description": "The extent to which I rely on readily available liquidity"
+        }
+      ],
+      "average_value": 0.725,
+      "value_range": [
+        0.5,
+        0.9
+      ],
+      "standard_deviation": 0.17078251276599332
+    }
+  ],
+  "attribute_frequency": {
+    "range_identification": 1,
+    "mean_reversion_bias": 1,
+    "patience_level": 1,
+    "liquidity_optimization": 1,
+    "trend_following": 1,
+    "volatility_absorption": 1,
+    "entry_precision": 1,
+    "competition_awareness": 1,
+    "momentum_aggressiveness": 1,
+    "profit_taking_threshold": 1,
+    "volatility_adaptation": 1,
+    "liquidity_reliance": 1
+  },
+  "all_attributes": [
+    {
+      "name": "range_identification",
+      "value": 0.9,
+      "market_condition": "Low Volatility, Sideways"
+    },
+    {
+      "name": "mean_reversion_bias",
+      "value": 0.8,
+      "market_condition": "Low Volatility, Sideways"
+    },
+    {
+      "name": "patience_level",
+      "value": 0.7,
+      "market_condition": "Low Volatility, Sideways"
+    },
+    {
+      "name": "liquidity_optimization",
+      "value": 0.9,
+      "market_condition": "Low Volatility, Sideways"
+    },
+    {
+      "name": "trend_following",
+      "value": 0.9,
+      "market_condition": "High Volatility, Upward"
+    },
+    {
+      "name": "volatility_absorption",
+      "value": 0.7,
+      "market_condition": "High Volatility, Upward"
+    },
+    {
+      "name": "entry_precision",
+      "value": 0.6,
+      "market_condition": "High Volatility, Upward"
+    },
+    {
+      "name": "competition_awareness",
+      "value": 0.4,
+      "market_condition": "High Volatility, Upward"
+    },
+    {
+      "name": "momentum_aggressiveness",
+      "value": 0.9,
+      "market_condition": "Extreme Volatility, Strong Upward"
+    },
+    {
+      "name": "profit_taking_threshold",
+      "value": 0.5,
+      "market_condition": "Extreme Volatility, Strong Upward"
+    },
+    {
+      "name": "volatility_adaptation",
+      "value": 0.7,
+      "market_condition": "Extreme Volatility, Strong Upward"
+    },
+    {
+      "name": "liquidity_reliance",
+      "value": 0.8,
+      "market_condition": "Extreme Volatility, Strong Upward"
+    }
+  ]
+}

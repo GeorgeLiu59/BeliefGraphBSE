@@ -72,6 +72,7 @@ if not hm_logger.handlers:
 # LLM and belief graph imports
 import google.generativeai as genai
 from belief_graph import BeliefGraph, MarketEvent, EventType
+from TraderCustomAttributes import TraderCustomAttributes
 import uuid
 import json
 import re
@@ -5437,7 +5438,16 @@ def populate_market(trdrs_spec, traders, shuffle, vrbs):
             return TraderPT2('PT2', name, proptrader_balance, parameters, time0)
 
         elif robottype == 'ADAPTIVE':
-            return TraderAdaptive('ADAPTIVE', name, proptrader_balance, parameters, time0)
+            # Create aggressiveness-only trader
+            market_context = {
+                'volatility': 'High',  # Default market context
+                'trend': 'Upward',
+                'competition': 'Moderate',
+                'liquidity': 'High'
+            }
+            trader = TraderCustomAttributes('ADAPTIVE', name, proptrader_balance, None, time0, use_attributes=True, single_attribute='aggressiveness')
+            trader.initialize_custom_attributes(market_context)
+            return trader
         else:
             sys.exit('FATAL: don\'t know trader type %s\n' % robottype)
 
@@ -5817,7 +5827,7 @@ def calculate_prop_trader_net_worth(traders, lob=None):
     net_worths = {}
     
     for tid, trader in traders.items():
-        if trader.ttype in ['PT1', 'PT2', 'LLM', 'BG', 'LLMHM']:
+        if trader.ttype in ['PT1', 'PT2', 'LLM', 'BG', 'LLMHM', 'ADAPTIVE', 'NO_ATTR']:
             net_worth = trader.balance
             
             # Check if trader is holding inventory
@@ -6051,9 +6061,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
                     int(time),
                     net_worths.get('PT1', 500),  # Default to starting balance if no data
                     net_worths.get('PT2', 500),
-                    net_worths.get('LLM', 500),
-                    net_worths.get('BG', 500),
-                    net_worths.get('LLMHM', 500),
+                    net_worths.get('ADAPTIVE', 500),
                 ])
 
             # traders respond to whatever happened
@@ -6106,7 +6114,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     
     prop_traders = []
     for tid, trader in traders.items():
-        if trader.ttype in ['PT1', 'PT2', 'LLM', 'BG', 'LLMHM']:
+        if trader.ttype in ['PT1', 'PT2', 'LLM', 'BG', 'LLMHM', 'ADAPTIVE', 'NO_ATTR']:
             net_worth = trader.balance
             
             # Check if trader is holding inventory
@@ -6346,9 +6354,10 @@ if __name__ == "__main__":
         sellers_spec = buyers_spec
 
         # proptraders_spec specifies strategies played by proprietary-traders, and how many of each
+        # ABLATION STUDY: Phase 2 - Individual Attributes (Aggressiveness only)
         proptraders_spec = [('PT1', 1, {'bid_percent': 0.95, 'ask_delta': 2, 'n_past_trades': 5}), 
                            ('PT2', 1, {'bid_percent': 0.99, 'ask_delta': 2, 'n_past_trades': 5}),
-                           ('ADAPTIVE', 1)]
+                           ('ADAPTIVE', 1)]  # Aggressiveness-only attribute
 
         # trader_spec wraps up the specifications for the buyers, sellers, and proptraders
         traders_spec = {'sellers': sellers_spec, 'buyers': buyers_spec, 'proptraders': proptraders_spec}

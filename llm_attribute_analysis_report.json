@@ -1,0 +1,203 @@
+{
+  "timestamp": 1756955900.9562318,
+  "summary": {
+    "total_agents": 2,
+    "total_adaptations": 1,
+    "analysis_period": {
+      "start": 1756955900.956223,
+      "end": 1756955900.956224,
+      "duration_hours": 2.6490953233506944e-10
+    }
+  },
+  "attribute_distributions": {
+    "total_agents": 2,
+    "attribute_means": {
+      "aggressiveness": 0.44999999999999996,
+      "risk_tolerance": 0.44999999999999996,
+      "patience": 0.55,
+      "adaptability": 0.4,
+      "momentum_following": 0.6,
+      "mean_reversion": 0.39999999999999997
+    },
+    "attribute_stds": {
+      "aggressiveness": 0.35355339059327373,
+      "risk_tolerance": 0.21213203435596426,
+      "patience": 0.3535533905932738,
+      "adaptability": 0.282842712474619,
+      "momentum_following": 0.42426406871192857,
+      "mean_reversion": 0.42426406871192845
+    },
+    "attribute_ranges": {
+      "aggressiveness": {
+        "min": 0.2,
+        "max": 0.7
+      },
+      "risk_tolerance": {
+        "min": 0.3,
+        "max": 0.6
+      },
+      "patience": {
+        "min": 0.3,
+        "max": 0.8
+      },
+      "adaptability": {
+        "min": 0.2,
+        "max": 0.6
+      },
+      "momentum_following": {
+        "min": 0.3,
+        "max": 0.9
+      },
+      "mean_reversion": {
+        "min": 0.1,
+        "max": 0.7
+      }
+    },
+    "correlation_matrix": {
+      "aggressiveness": {
+        "aggressiveness": 1.0,
+        "risk_tolerance": 1.0,
+        "patience": -1.0,
+        "adaptability": -1.0,
+        "momentum_following": 0.9999999999999997,
+        "mean_reversion": -0.9999999999999998
+      },
+      "risk_tolerance": {
+        "aggressiveness": 1.0,
+        "risk_tolerance": 1.0,
+        "patience": -1.0,
+        "adaptability": -0.9999999999999999,
+        "momentum_following": 0.9999999999999997,
+        "mean_reversion": -0.9999999999999999
+      },
+      "patience": {
+        "aggressiveness": -1.0,
+        "risk_tolerance": -1.0,
+        "patience": 1.0,
+        "adaptability": 1.0,
+        "momentum_following": -0.9999999999999997,
+        "mean_reversion": 0.9999999999999998
+      },
+      "adaptability": {
+        "aggressiveness": -1.0,
+        "risk_tolerance": -0.9999999999999999,
+        "patience": 1.0,
+        "adaptability": 1.0,
+        "momentum_following": -0.9999999999999998,
+        "mean_reversion": 0.9999999999999998
+      },
+      "momentum_following": {
+        "aggressiveness": 0.9999999999999997,
+        "risk_tolerance": 0.9999999999999997,
+        "patience": -0.9999999999999997,
+        "adaptability": -0.9999999999999998,
+        "momentum_following": 1.0,
+        "mean_reversion": -1.0000000000000002
+      },
+      "mean_reversion": {
+        "aggressiveness": -0.9999999999999998,
+        "risk_tolerance": -0.9999999999999999,
+        "patience": 0.9999999999999998,
+        "adaptability": 0.9999999999999998,
+        "momentum_following": -1.0000000000000002,
+        "mean_reversion": 1.0
+      }
+    }
+  },
+  "design_strategies": {
+    "strategy_distribution": {
+      "conservative": 1,
+      "momentum": 1
+    },
+    "strategy_performance": {
+      "conservative": 25.0,
+      "momentum": 45.0
+    },
+    "most_popular_strategy": [
+      "conservative",
+      1
+    ],
+    "best_performing_strategy": [
+      "momentum",
+      45.0
+    ]
+  },
+  "adaptation_patterns": {
+    "total_adaptations": 1,
+    "adaptation_triggers": {
+      "profit": [
+        -50
+      ],
+      "market_volatility": [
+        0.8
+      ]
+    },
+    "strategy_changes": {
+      "aggressive": 1
+    },
+    "hourly_pattern": {
+      "2": 1
+    },
+    "most_common_adaptation": [
+      "aggressive",
+      1
+    ]
+  },
+  "performance_correlations": {
+    "correlation_coefficients": {
+      "aggressiveness": 1.0000000000000007,
+      "risk_tolerance": 1.0000000000000007,
+      "adaptability": -1.0000000000000002,
+      "patience": -1.0,
+      "momentum_following": 0.9999999999999999,
+      "mean_reversion": -0.9999999999999994
+    },
+    "strongest_correlations": [
+      [
+        "aggressiveness",
+        1.0000000000000007
+      ],
+      [
+        "risk_tolerance",
+        1.0000000000000007
+      ],
+      [
+        "adaptability",
+        -1.0000000000000002
+      ]
+    ],
+    "total_agents_analyzed": 2
+  },
+  "agent_evolutions": {
+    "agent_001": {
+      "agent_id": "agent_001",
+      "initial_strategy": "conservative",
+      "total_adaptations": 1,
+      "adaptation_timeline": [
+        {
+          "step": 1,
+          "timestamp": 1756952300.95622,
+          "old_strategy": {
+            "aggressiveness": 0.2,
+            "risk_tolerance": 0.3
+          },
+          "new_strategy": {
+            "aggressiveness": 0.7,
+            "risk_tolerance": 0.6
+          },
+          "reasoning": "Market conditions changed, need to be more active",
+          "performance": {
+            "profit": -50,
+            "market_volatility": 0.8
+          }
+        }
+      ],
+      "strategy_changes": [
+        "aggressive"
+      ]
+    },
+    "agent_002": {
+      "error": "No adaptation history for this agent"
+    }
+  }
+}
