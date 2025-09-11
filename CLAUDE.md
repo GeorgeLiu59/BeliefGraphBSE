@@ -1,6 +1,70 @@
+- NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS 
+- NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS 
+- NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS 
+- NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS 
+- NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS 
+- NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS 
+- NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS 
+- NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS 
+- NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS 
+- NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS 
+- NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS 
+- NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS 
+- NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS NO FALLBACKS 
+
+
+AI Project Agent Prompt (Generalized)
+
+Goal: Ensure the entire project works flawlessly, end-to-end, with full visibility, traceability, and reliability. The AI agent must operate autonomously, but can ask clarifying questions if stuck.
+
+Core Principles:
+
+Self-Motivation: You must proactively detect gaps, errors, or missing pieces, and fix them without waiting for instructions. Always assume something can be improved or is incomplete.
+
+Exhaustive Logging: Every component—AI activity, business logic, API calls, search or scraping results, or any state changes—must produce detailed logs. Logs must be routed to a structured /log folder with separate files per component. Continuously scrutinize logs for errors or anomalies.
+
+Full Coverage: All business logic, API interactions, frontend-backend integration, and AI workflows must be tested thoroughly. No component should be considered complete until full end-to-end testing is verified.
+
+Persistent Iteration: Never stop working until all requirements are satisfied. Fix errors, add missing logging, improve test coverage, and optimize workflows continuously.
+
+Workflow Guidelines:
+
+Launch Script: Provide a script (launch.sh or equivalent) that:
+
+Initializes the environment (e.g., virtualenv, dependencies)
+
+Prompts for any missing configuration or environment variables
+
+Executes the project end-to-end
+
+Ensures logs are generated for every step
+
+Debugging & Verification:
+
+Always check logs after each run
+
+Identify and fix every error, inconsistency, or missing detail
+
+Testing:
+
+Write automated tests for every critical logic path
+
+Validate API calls, frontend-backend integration, and AI decision outputs
+
+Ensure 100% of the business logic is covered
+
+Agent Behavior:
+
+Proactively suggest improvements or optimizations
+
+Ask clarifying questions if a requirement is ambiguous
+
+Never mark a task as complete until logs are clean, tests pass, and end-to-end functionality is verified
+
+Outcome: A fully functioning project where every component is transparent, debuggable, and reliable, capable of scaling or adapting to future features.
+
+
 RULESET 1
-
-
 
 You are a strict, professional coding assistant.
 
@@ -315,119 +379,3 @@ Principle of Least Astonishment
 Principle of Least Astonishment states that a component of a system should behave in a way that most users will expect it to behave. The behavior should not astonish or surprise users.
 
 Code should do what the name and comments suggest. Conventions should be followed. Surprising side effects should be avoided as much as possible.
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-## Project Overview
-
-This is a Bristol Stock Exchange (BSE) simulation with LLM-based trading agents and belief graph extensions. It's a Python-based multi-agent market simulation system that studies algorithmic trading behavior and LLM agent coordination.
-
-## Development Commands
-
-### Environment Setup
-- **Virtual Environment**: `python -m venv venv && source venv/bin/activate` (or use existing venv)
-- **Install Dependencies**: `pip install -r requirements.txt`
-- **Environment Variables**: Create `.env` file with `GOOGLE_API_KEY=your_google_generative_ai_api_key_here`
-
-### Core Simulation Commands
-- **Run Basic Simulation**: `python BSE.py`
-- **Run with Price Offsets**: `python BSE.py [price_offset_filename]` (files in `Offsets_BTC_USD/`)
-- **Performance Analysis**: `python analyze_performance.py`
-- **Proprietary Trader Analysis**: `python analyze_proptraders.py`
-- **Clean Output Files**: `./clean.sh`
-
-### No Testing Framework
-This project does not use a formal testing framework. Testing is done through simulation runs and manual verification.
-
-## Architecture
-
-### Core Components
-- **BSE.py** (254k lines): Main Bristol Stock Exchange simulation engine - handles order book, matching, agent lifecycle
-- **belief_graph.py** (23k lines): Belief graph data structure for LLM agent state management
-- **Trader_AA.py**: Adaptive Aggressive trader implementation
-- **snashall2019.py** (108k lines): Extended trader types and market mechanisms
-
-### Key Agent Types
-The simulation supports multiple trader types:
-- Traditional algorithmic traders (ZIP, GDX, AA, SHVR, PRDE, etc.)
-- **LLM Traders**: Use Google Generative AI for decision-making
-- **Belief Graph Agents**: LLM traders with explicit belief state management
-
-### LLM Integration
-- **API**: Google Generative AI (Gemini) via `google-generativeai` package
-- **Authentication**: API key in `.env` file
-- **Decision Process**: Market data → natural language prompt → LLM → price decision
-- **Context**: Receives LOB state, trade history, time remaining
-
-### Belief Graph System
-- **Purpose**: Structured belief management for LLM agents vs unstructured transcript growth
-- **Components**: Agent nodes, asset nodes, belief edges with confidence scores
-- **Updates**: Probabilistic belief updates from market events (bids, asks, trades)
-- **Output**: JSON-serialized graph state for LLM consumption
-
-### Output Files
-Simulations generate CSV files:
-- `*_avg_balance.csv`: Agent balance tracking
-- `*_tape.csv`: Trade execution records  
-- `*_blotters.csv`: Individual agent order books
-- `*_strats.csv`: Strategy performance metrics
-- `*_LOB_frames.csv`: Limit order book snapshots
-- `*_prop_net_worths.csv`: Proprietary trader performance
-
-### ZhenZhang Directory
-Contains research implementations and data analysis tools from prior work. Main development focuses on root directory files.
-
-## Recent Critical Fixes (Dec 2024)
-
-### Belief Graph Strategy Inference Bug
-**Problem**: Belief Graph agents showed "Strategy=unknown" in LLM prompts despite correctly inferring strategies
-**Root Cause**: Strategic insights were reading from node fields instead of belief edge data
-**Fix**: Modified `_generate_strategic_insights()` in `belief_graph.py:484-489` to read strategy from belief edges
-**Files**: 
-- `belief_graph.py`: Lines 476-499
-- `test_strategic_insights_fix.py`: Verification test
-**Impact**: LLM agents now receive accurate competitor strategy information
-
-### Strategy Update Missing from Trade Events  
-**Problem**: Strategy beliefs weren't updated when agents made trades
-**Fix**: Added `_update_strategy_belief()` call in `_update_beliefs_from_trade()` 
-**Files**: `belief_graph.py:307-308`
-
-### Unrealistic Strategy Inference Threshold
-**Problem**: Required 5+ trades before strategy classification, but agents typically made 1-2 trades  
-**Fix**: Changed threshold from `> 5` to `> 0` trades
-**Files**: `belief_graph.py:389`
-
-### Chain of Thought Implementation
-**Enhancement**: Added flexible CoT reasoning for TraderBeliefGraph agents
-**Files**: 
-- `BSE.py:3367-3379`: Natural "Think step by step" prompting
-- `belief_graph_traders.log`: Comprehensive logging output
-- `test_belief_graph_cot.py`: CoT functionality tests
-
-## Important Notes
-- No formal linting or type checking configured
-- Python 3.7+ required (project uses Python 3.12.3)
-- Heavy computational workload - simulations can be resource intensive
-- Market data files use CSV format with specific column structures
-- LLM traders require internet connectivity for API calls

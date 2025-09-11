@@ -62,10 +62,12 @@ from datetime import datetime
 # LLM and belief graph imports
 import google.generativeai as genai
 from belief_graph import BeliefGraph, MarketEvent, EventType
+from TraderCustomAttributes import TraderCustomAttributes
 import uuid
 import json
 import re
 from dotenv import load_dotenv
+from hm_trader import TraderLLM_HM
 
 # Load environment variables from .env file
 load_dotenv()
@@ -9274,47 +9276,35 @@ def populate_market(trdrs_spec, traders, shuffle, vrbs):
         :param parameters: a list of parameter values for this trader-type.
         :return: a newly created trader of the designated type.
         """
-        balance = 0.00
-        proptrader_balance = 500  # marketmakers start with zero inventory and a balance of $500
-        time0 = 0
-        if robottype == 'GVWY':
-            return TraderGiveaway('GVWY', name, balance, parameters, time0)
-        elif robottype == 'ZIC':
-            return TraderZIC('ZIC', name, balance, parameters, time0)
-        elif robottype == 'SHVR':
-            return TraderShaver('SHVR', name, balance, parameters, time0)
-        elif robottype == 'SNPR':
-            return TraderSniper('SNPR', name, balance, parameters, time0)
-        elif robottype == 'ZIP':
-            return TraderZIP('ZIP', name, balance, parameters, time0)
-        elif robottype == 'ZIPSH':
-            return TraderZIP('ZIPSH', name, balance, parameters, time0)
-        elif robottype == 'PRZI':
-            return TraderPRZI('PRZI', name, balance, parameters, time0)
-        elif robottype == 'PRSH':
-            return TraderPRZI('PRSH', name, balance, parameters, time0)
-        elif robottype == 'PRDE':
-            return TraderPRZI('PRDE', name, balance, parameters, time0)
-        # elif robottype == 'PT1':
-        #     return TraderPT1('PT1', name, proptrader_balance, parameters, time0)
-        # elif robottype == 'PT2':
-        #     return TraderPT2('PT2', name, proptrader_balance, parameters, time0)
-        # elif robottype == 'LLM':
-        #     return TraderLLMProp('LLM', name, proptrader_balance, parameters, time0)
-        elif robottype == 'BG':
-            return TraderBeliefGraph('BG', name, proptrader_balance, parameters, time0)
-        # elif robottype == 'BGNO':
-        #     return TraderBeliefGraphWithoutCOT('BGNO', name, proptrader_balance, parameters, time0)
-        # elif robottype == 'PGCO':
-        #     return TraderPerfectGraphWithCoT('PGCO', name, proptrader_balance, parameters, time0)
-        # elif robottype == 'PGNO':
-        #     return TraderPerfectGraphWithoutCoT('PGNO', name, proptrader_balance, parameters, time0)
-        elif robottype == 'GV1':
-            return GraphVar1('GV1', name, proptrader_balance, parameters, time0)
-        elif robottype == 'GV2':
-            return GraphVar2('GV2', name, proptrader_balance, parameters, time0)
+        # UNIFIED CONFIGURATION APPROACH: Use the global configuration to create traders
+        # Check if trader type is configured
+        if robottype not in AVAILABLE_TRADER_TYPES:
+            sys.exit(f'FATAL: Unknown trader type "{robottype}". Available types: {list(AVAILABLE_TRADER_TYPES.keys())}\n')
+        
+        trader_config = AVAILABLE_TRADER_TYPES[robottype]
+        class_name = trader_config['class']
+        balance_type = trader_config['balance_type']
+        default_params = trader_config['params']
+        
+        # Set balance based on trader type
+        if balance_type == 'prop':
+            balance = 500  # Proprietary traders start with $500
         else:
-            sys.exit('FATAL: don\'t know trader type %s\n' % robottype)
+            balance = 0.00  # Standard traders start with $0
+            
+        time0 = 0
+        
+        # Merge default parameters with provided parameters
+        final_params = default_params.copy()
+        if parameters:
+            final_params.update(parameters)
+        
+        # Dynamically create trader using globals() to get the class
+        trader_class = globals().get(class_name)
+        if trader_class is None:
+            sys.exit(f'FATAL: Trader class "{class_name}" not found for type "{robottype}"\n')
+        
+        return trader_class(robottype, name, balance, final_params, time0)
 
     def shuffle_traders(ttype_char, n, trader_list):
         """
@@ -9693,7 +9683,7 @@ def calculate_prop_trader_net_worth(traders, lob=None):
     
     for tid, trader in traders.items():
         # if trader.ttype in ['PT1', 'PT2', 'LLM', 'BG', 'BGNO', 'PGCO', 'PGNO', 'GV1', 'GV2']:
-        if trader.ttype in ['BG', 'GV1', 'GV2']:
+        if trader.ttype in PROP_TRADER_TYPES:
             net_worth = trader.balance
             
             # Check if trader is holding inventory
@@ -9849,7 +9839,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     prop_net_worth_writer = csv.writer(prop_net_worth_file)
     # prop_net_worth_writer.writerow(['Timestamp', 'PT1_NetWorth', 'PT2_NetWorth', 'LLM_NetWorth', 'BG_NetWorth', 'BGNO_NetWorth', 'PGCO_NetWorth', 'PGNO_NetWorth', 'GV1_NetWorth', 'GV2_NetWorth'])
 
-    prop_net_worth_writer.writerow(['Timestamp', 'BG_NetWorth', 'GV1_NetWorth', 'GV2_NetWorth'])
+    prop_net_worth_writer.writerow(PROP_TRADER_CSV_HEADERS)
         
     # initialise the exchange
     exchange = Exchange()
@@ -9930,12 +9920,8 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
                 
                 # Record proprietary trader net worths
                 net_worths = calculate_prop_trader_net_worth(traders, lob)
-                prop_net_worth_writer.writerow([
-                    int(time),
-                    net_worths.get('BG', 500),   # Default to starting balance if no data
-                    net_worths.get('GV1', 500),
-                    net_worths.get('GV2', 500)
-                ])
+                row = [int(time)] + [net_worths.get(ttype, 500) for ttype in PROP_TRADER_TYPES]
+                prop_net_worth_writer.writerow(row)
 
             # traders respond to whatever happened
             lob = exchange.publish_lob(time, lobframes, lob_verbose)
@@ -9989,7 +9975,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     for tid, trader in traders.items():
         # if trader.ttype in ['PT1', 'PT2', 'LLM', 'BG', 'BGNO', 'PGCO', 'PGNO', 'GV1', 'GV2']:
 
-        if trader.ttype in ['BG', 'GV1', 'GV2']:
+        if trader.ttype in PROP_TRADER_TYPES:
             net_worth = trader.balance
             
             # Check if trader is holding inventory
@@ -10027,9 +10013,86 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 #############################
 # # Below here is where we set up and run a whole series of experiments
 
+# ============================================================================
+# GLOBAL TRADER CONFIGURATION
+# ============================================================================
+# Edit these lists to easily control which traders are included in the simulation
+
+# Available trader types with their default parameters and class mappings
+AVAILABLE_TRADER_TYPES = {
+    # Standard algorithmic traders (use $0 starting balance)
+    'SHVR': {'class': 'TraderShaver', 'balance_type': 'standard', 'params': {}},
+    'GVWY': {'class': 'TraderGiveaway', 'balance_type': 'standard', 'params': {}},
+    'ZIC': {'class': 'TraderZIC', 'balance_type': 'standard', 'params': {}},
+    'ZIP': {'class': 'TraderZIP', 'balance_type': 'standard', 'params': {}},
+    'ZIPSH': {'class': 'TraderZIP', 'balance_type': 'standard', 'params': {}},
+    'SNPR': {'class': 'TraderSniper', 'balance_type': 'standard', 'params': {}},
+    'PRZI': {'class': 'TraderPRZI', 'balance_type': 'standard', 'params': {}},
+    'PRSH': {'class': 'TraderPRZI', 'balance_type': 'standard', 'params': {}},
+    'PRDE': {'class': 'TraderPRZI', 'balance_type': 'standard', 'params': {}},
+    
+    # Proprietary traders (use $500 starting balance)
+    'PT1': {'class': 'TraderPT1', 'balance_type': 'prop', 'params': {'bid_percent': 0.95, 'ask_delta': 2, 'n_past_trades': 5}},
+    'PT2': {'class': 'TraderPT2', 'balance_type': 'prop', 'params': {'bid_percent': 0.99, 'ask_delta': 2, 'n_past_trades': 5}},
+    'LLM': {'class': 'TraderLLMProp', 'balance_type': 'prop', 'params': {}},
+    'BG': {'class': 'TraderBeliefGraph', 'balance_type': 'prop', 'params': {}},
+    'BGNO': {'class': 'TraderBeliefGraphWithoutCOT', 'balance_type': 'prop', 'params': {}},
+    'PGCO': {'class': 'TraderPerfectGraphWithCoT', 'balance_type': 'prop', 'params': {}},
+    'PGNO': {'class': 'TraderPerfectGraphWithoutCoT', 'balance_type': 'prop', 'params': {}},
+    'GV1': {'class': 'GraphVar1', 'balance_type': 'prop', 'params': {}},
+    'GV2': {'class': 'GraphVar2', 'balance_type': 'prop', 'params': {}},
+}
+
+# CONFIGURATION: Edit these to control which traders are included
+ACTIVE_BUYERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]
+ACTIVE_SELLERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]  # Usually same as buyers
+ACTIVE_PROPTRADERS = [('BG', 1), ('GV1', 1), ('GV2', 1)]  # Only BG, GV1, GV2 as requested
+
+# Automatically generate lists of proprietary trader types for filtering
+PROP_TRADER_TYPES = [ttype for ttype, count in ACTIVE_PROPTRADERS]
+PROP_TRADER_CSV_HEADERS = ['Timestamp'] + [f'{ttype}_NetWorth' for ttype in PROP_TRADER_TYPES]
+
+# ============================================================================
+
+def get_trader_parameters(trader_type):
+    """Get default parameters for a trader type"""
+    trader_info = AVAILABLE_TRADER_TYPES.get(trader_type, {})
+    return trader_info.get('params', {})
+
+def validate_trader_configuration():
+    """Validate that all configured trader types are available"""
+    all_configured = []
+    
+    # Check buyers
+    for ttype, count in ACTIVE_BUYERS:
+        all_configured.append(ttype)
+        if ttype not in AVAILABLE_TRADER_TYPES:
+            raise ValueError(f"Unknown buyer trader type: {ttype}")
+    
+    # Check sellers  
+    for ttype, count in ACTIVE_SELLERS:
+        all_configured.append(ttype)
+        if ttype not in AVAILABLE_TRADER_TYPES:
+            raise ValueError(f"Unknown seller trader type: {ttype}")
+            
+    # Check prop traders
+    for ttype, count in ACTIVE_PROPTRADERS:
+        all_configured.append(ttype)
+        if ttype not in AVAILABLE_TRADER_TYPES:
+            raise ValueError(f"Unknown proprietary trader type: {ttype}")
+    
+    print(f"✓ Configuration validated. Active trader types: {sorted(set(all_configured))}")
+    return True
+
 if __name__ == "__main__":
 
-    price_offset_filename = 'offset_BTC_USD_20250211.csv'
+    # Validate configuration before starting
+    validate_trader_configuration()
+    
+    print(f"Active proprietary traders: {PROP_TRADER_TYPES}")
+    print(f"CSV headers: {PROP_TRADER_CSV_HEADERS}")
+
+    price_offset_filename = 'offset_BTC_USD_20250325.csv'
 
     # if called from the command line with one argument, the first argument is the price offset filename
     if len(sys.argv) > 1:
@@ -10221,20 +10284,10 @@ if __name__ == "__main__":
         # create unique i.d. string for this trial
         trial_id = 'bse_d%03d_i%02d_%04d' % (n_days, order_interval, trial)
 
-        # buyer_spec specifies the strategies played by buyers, and for each strategy how many such buyers to create
-        buyers_spec = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]
-        #     ('PRZI', 5, {'s_min': -1.0, 's_max': +1.0})]
-        # Full spec (commented out): [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]
-
-        # seller_spec specifies the strategies played by sellers, and for each strategy how many such sellers to create
-        sellers_spec = buyers_spec
-
-        # proptraders_spec specifies strategies played by proprietary-traders, and how many of each
-        # Including BG, GV1, and GV2 as requested
-        proptraders_spec = [('BG', 1), ('GV1', 1), ('GV2', 1)]
-        # Full spec (commented out): [('PT1', 1, {'bid_percent': 0.95, 'ask_delta': 2, 'n_past_trades': 5}), 
-        #                            ('PT2', 1, {'bid_percent': 0.99, 'ask_delta': 2, 'n_past_trades': 5}),
-        #                            ('LLM', 1), ('BG', 1), ('BGNO', 1), ('PGCO', 1), ('PGNO', 1), ('GV1', 1), ('GV2', 1)]
+        # Use the unified configuration system
+        buyers_spec = ACTIVE_BUYERS
+        sellers_spec = ACTIVE_SELLERS  
+        proptraders_spec = ACTIVE_PROPTRADERS
 
         # trader_spec wraps up the specifications for the buyers, sellers, and proptraders
         traders_spec = {'sellers': sellers_spec, 'buyers': buyers_spec, 'proptraders': proptraders_spec}
