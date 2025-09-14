@@ -619,12 +619,12 @@ class BeliefGraph:
 
 class GraphVar1:
     """
-    Main belief graph class for managing agent beliefs and market state.
+    Main belief graph class for managing agent beliefs and market state using discrete belief sets.
     
     The belief graph maintains:
     - Nodes for each agent and the traded asset
-    - Edges representing beliefs about other agents' valuations and strategies
-    - Probabilistic updates based on market events
+    - Edges representing discrete belief sets about other agents' valuations and strategies
+    - Set elimination updates based on market events
     - Query interface for decision-making
     """
     
@@ -655,30 +655,159 @@ class GraphVar1:
             self._add_initial_beliefs(agent_id)
     
     def _add_initial_beliefs(self, agent_id: str) -> None:
-        """Add initial beliefs about a new agent"""
-        # Add belief about agent's strategy (initially unknown)
-        strategy_edge = BeliefEdge(
-            edge_id=str(uuid.uuid4()),
-            source_node=self.asset_id,
-            target_node=agent_id,
-            belief_type="strategy",
-            confidence=0.1,
-            value="unknown",
-            timestamp=self.current_time
-        )
-        self.edges[strategy_edge.edge_id] = strategy_edge
-        
-        # Add belief about agent's valuation (initially unknown)
+        """Add initial discrete belief sets about a new agent"""
+        # Add discrete belief about agent's valuation possibilities
         valuation_edge = BeliefEdge(
             edge_id=str(uuid.uuid4()),
             source_node=self.asset_id,
             target_node=agent_id,
             belief_type="valuation",
-            confidence=0.1,
-            value=None,
+            confidence=1.0,  # Full confidence in the discrete set
+            value={"possible_valuations": [80, 85, 90, 95, 100, 105, 110, 115, 120]},
             timestamp=self.current_time
         )
         self.edges[valuation_edge.edge_id] = valuation_edge
+        
+        # Add discrete belief about agent's market direction
+        direction_edge = BeliefEdge(
+            edge_id=str(uuid.uuid4()),
+            source_node=self.asset_id,
+            target_node=agent_id,
+            belief_type="market_direction",
+            confidence=1.0,
+            value={"possible_directions": ["up", "down", "sideways"]},
+            timestamp=self.current_time
+        )
+        self.edges[direction_edge.edge_id] = direction_edge
+        
+        # Add discrete belief about agent's desperation level
+        desperation_edge = BeliefEdge(
+            edge_id=str(uuid.uuid4()),
+            source_node=self.asset_id,
+            target_node=agent_id,
+            belief_type="desperation_level",
+            confidence=1.0,
+            value={"possible_desperation": ["calm", "moderate", "desperate"]},
+            timestamp=self.current_time
+        )
+        self.edges[desperation_edge.edge_id] = desperation_edge
+        
+        # Add discrete belief about agent's available cash
+        cash_edge = BeliefEdge(
+            edge_id=str(uuid.uuid4()),
+            source_node=self.asset_id,
+            target_node=agent_id,
+            belief_type="available_cash",
+            confidence=1.0,
+            value={"possible_cash": ["low", "medium", "high"]},
+            timestamp=self.current_time
+        )
+        self.edges[cash_edge.edge_id] = cash_edge
+        
+        # Add discrete belief about agent's exit strategy
+        exit_edge = BeliefEdge(
+            edge_id=str(uuid.uuid4()),
+            source_node=self.asset_id,
+            target_node=agent_id,
+            belief_type="exit_strategy",
+            confidence=1.0,
+            value={"possible_exits": ["hold_till_end", "sell_early", "opportunistic"]},
+            timestamp=self.current_time
+        )
+        self.edges[exit_edge.edge_id] = exit_edge
+        
+    def _update_discrete_beliefs_from_market_event(self, agent_id: str, price: float, action_type: str, high_confidence: bool = False) -> None:
+        """Update discrete belief sets using set elimination logic based on market events"""
+        print(f"[BG-DISCRETE] Updating discrete beliefs for {agent_id}, price={price}, action={action_type}, high_conf={high_confidence}")
+        
+        # Update valuation beliefs using set elimination
+        valuation_edge = None
+        for edge in self.edges.values():
+            if (edge.source_node == self.asset_id and 
+                edge.target_node == agent_id and 
+                edge.belief_type == "valuation"):
+                valuation_edge = edge
+                break
+        
+        if valuation_edge and valuation_edge.value and "possible_valuations" in valuation_edge.value:
+            possible_vals = valuation_edge.value["possible_valuations"]
+            
+            # Set elimination based on observed price and action
+            if action_type == "bid":
+                # Agent bidding at price X suggests valuation >= X
+                # Eliminate valuations significantly below bid price
+                threshold = price - 5  # Allow some margin
+                possible_vals = [v for v in possible_vals if v >= threshold]
+                print(f"[BG-DISCRETE] Bid at {price}: eliminated valuations < {threshold}, remaining: {possible_vals}")
+            elif action_type == "ask":
+                # Agent asking at price X suggests valuation <= X
+                # Eliminate valuations significantly above ask price  
+                threshold = price + 5  # Allow some margin
+                possible_vals = [v for v in possible_vals if v <= threshold]
+                print(f"[BG-DISCRETE] Ask at {price}: eliminated valuations > {threshold}, remaining: {possible_vals}")
+            elif action_type == "trade":
+                # Trade at price X suggests valuation very close to X
+                if high_confidence:
+                    # Keep valuations within tight range of trade price
+                    margin = 3
+                    possible_vals = [v for v in possible_vals if abs(v - price) <= margin]
+                    print(f"[BG-DISCRETE] Trade at {price}: eliminated outside range [{price-margin}, {price+margin}], remaining: {possible_vals}")
+            
+            # Update the discrete set
+            valuation_edge.value["possible_valuations"] = possible_vals
+            valuation_edge.timestamp = self.current_time
+        
+        # Update desperation level based on price aggressiveness
+        desperation_edge = None
+        for edge in self.edges.values():
+            if (edge.source_node == self.asset_id and 
+                edge.target_node == agent_id and 
+                edge.belief_type == "desperation_level"):
+                desperation_edge = edge
+                break
+        
+        if desperation_edge and "possible_desperation" in desperation_edge.value:
+            possible_desp = desperation_edge.value["possible_desperation"]
+            
+            # Get market context for aggressiveness assessment
+            current_bid = self.asset_node.current_best_bid
+            current_ask = self.asset_node.current_best_ask
+            
+            if action_type == "bid" and current_ask:
+                # Aggressive bidding near ask price suggests desperation
+                if price >= current_ask * 0.98:  # Bidding within 2% of ask
+                    possible_desp = [d for d in possible_desp if d != "calm"]
+                    print(f"[BG-DISCRETE] Aggressive bid: eliminated 'calm' desperation, remaining: {possible_desp}")
+            elif action_type == "ask" and current_bid:
+                # Aggressive asking near bid price suggests desperation
+                if price <= current_bid * 1.02:  # Asking within 2% of bid
+                    possible_desp = [d for d in possible_desp if d != "calm"]
+                    print(f"[BG-DISCRETE] Aggressive ask: eliminated 'calm' desperation, remaining: {possible_desp}")
+            
+            desperation_edge.value["possible_desperation"] = possible_desp
+            desperation_edge.timestamp = self.current_time
+        
+        # Update available cash based on trade volume patterns
+        agent_node = self.nodes[agent_id]
+        if agent_node.total_volume > 0:  # Only update if we have volume data
+            cash_edge = None
+            for edge in self.edges.values():
+                if (edge.source_node == self.asset_id and 
+                    edge.target_node == agent_id and 
+                    edge.belief_type == "available_cash"):
+                    cash_edge = edge
+                    break
+            
+            if cash_edge and "possible_cash" in cash_edge.value:
+                possible_cash = cash_edge.value["possible_cash"]
+                
+                # Large trades suggest higher available cash
+                if agent_node.total_volume >= 5:  # Arbitrary threshold for "large" volume
+                    possible_cash = [c for c in possible_cash if c != "low"]
+                    print(f"[BG-DISCRETE] High volume ({agent_node.total_volume}): eliminated 'low' cash, remaining: {possible_cash}")
+                
+                cash_edge.value["possible_cash"] = possible_cash
+                cash_edge.timestamp = self.current_time
     
     def update_beliefs(self, event: MarketEvent) -> None:
         """
@@ -719,8 +848,8 @@ class GraphVar1:
         agent_node.last_bid_price = event.price
         agent_node.last_activity = event.timestamp
         
-        # Update valuation belief
-        self._update_valuation_belief(event.agent_id, event.price, "bid")
+        # Update discrete beliefs using set elimination logic
+        self._update_discrete_beliefs_from_market_event(event.agent_id, event.price, "bid")
     
     def _update_beliefs_from_ask(self, event: MarketEvent) -> None:
         """Update beliefs based on an ask event"""
@@ -1082,12 +1211,12 @@ class GraphVar1:
 
 class GraphVar2:
     """
-    Main belief graph class for managing agent beliefs and market state.
+    Main belief graph class for managing agent beliefs and market state using probabilistic distributions.
     
     The belief graph maintains:
     - Nodes for each agent and the traded asset
-    - Edges representing beliefs about other agents' valuations and strategies
-    - Probabilistic updates based on market events
+    - Edges representing probability distributions about other agents' valuations and strategies
+    - Bayesian updates based on market events
     - Query interface for decision-making
     """
     
@@ -1182,8 +1311,8 @@ class GraphVar2:
         agent_node.last_bid_price = event.price
         agent_node.last_activity = event.timestamp
         
-        # Update valuation belief
-        self._update_valuation_belief(event.agent_id, event.price, "bid")
+        # Update discrete beliefs using set elimination logic
+        self._update_discrete_beliefs_from_market_event(event.agent_id, event.price, "bid")
     
     def _update_beliefs_from_ask(self, event: MarketEvent) -> None:
         """Update beliefs based on an ask event"""

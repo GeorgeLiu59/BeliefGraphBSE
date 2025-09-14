@@ -3101,6 +3101,24 @@ if not pgno_logger.handlers:
     pgno_logger.addHandler(pgno_handler)
     pgno_logger.propagate = False  # Don't propagate to root logger
 
+gv1_logger = logging.getLogger('graphvar1_traders')
+gv1_logger.setLevel(logging.DEBUG)
+if not gv1_logger.handlers:
+    gv1_handler = logging.FileHandler('graphvar1_traders.log', mode='w')  # 'w' mode overwrites existing file
+    gv1_formatter = logging.Formatter('%(asctime)s - %(message)s')
+    gv1_handler.setFormatter(gv1_formatter)
+    gv1_logger.addHandler(gv1_handler)
+    gv1_logger.propagate = False  # Don't propagate to root logger
+
+gv2_logger = logging.getLogger('graphvar2_traders')
+gv2_logger.setLevel(logging.DEBUG)
+if not gv2_logger.handlers:
+    gv2_handler = logging.FileHandler('graphvar2_traders.log', mode='w')  # 'w' mode overwrites existing file
+    gv2_formatter = logging.Formatter('%(asctime)s - %(message)s')
+    gv2_handler.setFormatter(gv2_formatter)
+    gv2_logger.addHandler(gv2_handler)
+    gv2_logger.propagate = False  # Don't propagate to root logger
+
 # Belief Graph Trader Class
 class TraderBeliefGraph(Trader):
     """
@@ -3968,8 +3986,8 @@ class GraphVar1(Trader):
         
         # Import belief graph components
         try:
-            from belief_graph import BeliefGraph, MarketEvent, EventType
-            self.belief_graph = BeliefGraph(asset_id="BSE_ASSET")
+            from belief_graph import GraphVar1, MarketEvent, EventType
+            self.belief_graph = GraphVar1(asset_id="BSE_ASSET")
             self.MarketEvent = MarketEvent
             self.EventType = EventType
         except ImportError:
@@ -4001,9 +4019,9 @@ class GraphVar1(Trader):
         if self.api_key:
             genai.configure(api_key=self.api_key)
             self.model = genai.GenerativeModel(self.model_name)
-            bg_logger.info(f"Initialized BG (Belief Graph + CoT) trader {tid} with model {self.model_name}")
+            gv1_logger.info(f"Initialized BG (Belief Graph + CoT) trader {tid} with model {self.model_name}")
         else:
-            bg_logger.warning(f"No API key provided for BG (Belief Graph + CoT) trader {tid}")
+            gv1_logger.warning(f"No API key provided for BG (Belief Graph + CoT) trader {tid}")
             self.model = None
         
         # Trading state (same as LLM trader)
@@ -4066,20 +4084,20 @@ class GraphVar1(Trader):
             return
         
         # DEBUG: Log raw event data from BSE
-        bg_logger.debug(f"[BG-RAW-EVENT] {self.tid}: Processing raw event: {event}")
+        gv1_logger.debug(f"[BG-RAW-EVENT] {self.tid}: Processing raw event: {event}")
         
         # Determine event type
         if event['type'] == 'Trade':
             event_type = self.EventType.TRADE
-            bg_logger.debug(f"[BG-EVENT-TYPE] {self.tid}: Detected TRADE event")
+            gv1_logger.debug(f"[BG-EVENT-TYPE] {self.tid}: Detected TRADE event")
         elif event['type'] == 'Bid':
             event_type = self.EventType.BID
-            bg_logger.debug(f"[BG-EVENT-TYPE] {self.tid}: Detected BID event")
+            gv1_logger.debug(f"[BG-EVENT-TYPE] {self.tid}: Detected BID event")
         elif event['type'] == 'Ask':
             event_type = self.EventType.ASK
-            bg_logger.debug(f"[BG-EVENT-TYPE] {self.tid}: Detected ASK event")
+            gv1_logger.debug(f"[BG-EVENT-TYPE] {self.tid}: Detected ASK event")
         else:
-            bg_logger.debug(f"[BG-EVENT-SKIP] {self.tid}: Skipping unknown event type: {event['type']}")
+            gv1_logger.debug(f"[BG-EVENT-SKIP] {self.tid}: Skipping unknown event type: {event['type']}")
             return  # Skip other event types
         
         # Create market event for belief graph
@@ -4094,11 +4112,11 @@ class GraphVar1(Trader):
         )
         
         # DEBUG: Log parsed market event
-        bg_logger.debug(f"[BG-PARSED-EVENT] {self.tid}: Created MarketEvent - Type: {event_type.value}, Agent: {market_event.agent_id}, Price: {market_event.price}")
+        gv1_logger.debug(f"[BG-PARSED-EVENT] {self.tid}: Created MarketEvent - Type: {event_type.value}, Agent: {market_event.agent_id}, Price: {market_event.price}")
         
         # Update belief graph
         self.belief_graph.update_beliefs(market_event)
-        bg_logger.debug(f"[BG-UPDATED] {self.tid}: Belief graph updated with {event_type.value} event")
+        gv1_logger.debug(f"[BG-UPDATED] {self.tid}: Belief graph updated with {event_type.value} event")
 
     def _get_belief_graph_context(self, lob, time):
         """
@@ -4136,7 +4154,7 @@ class GraphVar1(Trader):
 
     def _generate_natural_language_insights(self):
         """
-        Convert the belief graph JSON into natural language insights for the LLM
+        Convert the discrete belief graph into natural language insights for the LLM
         """
         if not self.belief_graph:
             return "No belief graph available."
@@ -4150,79 +4168,134 @@ class GraphVar1(Trader):
         if not agents:
             return "No other agents observed yet."
         
-        # Analyze trading patterns
-        insights.append("=== MARKET BEHAVIOR ANALYSIS ===")
+        insights.append("=== DISCRETE BELIEF ANALYSIS ===")
         
-        # Group agents by strategy
-        aggressive_agents = []
-        passive_agents = []
-        neutral_agents = []
-        
-        for agent_id, node in agents.items():
-            if node.strategy_type == "aggressive":
-                aggressive_agents.append((agent_id, node))
-            elif node.strategy_type == "passive":
-                passive_agents.append((agent_id, node))
-            else:
-                neutral_agents.append((agent_id, node))
-        
-        # Strategy insights
-        if aggressive_agents:
-            insights.append(f"AGGRESSIVE TRADERS ({len(aggressive_agents)}): These agents tend to pay premium prices or accept lower selling prices to execute trades quickly.")
-            for agent_id, node in aggressive_agents:
-                insights.append(f"  • {agent_id}: Last traded at ${node.last_trade_price}, values asset around ${node.inferred_valuation} (confidence: {node.valuation_confidence:.0%})")
-        
-        if passive_agents:
-            insights.append(f"PASSIVE TRADERS ({len(passive_agents)}): These agents wait for better prices and are more patient.")
-            for agent_id, node in passive_agents:
-                insights.append(f"  • {agent_id}: Last traded at ${node.last_trade_price}, values asset around ${node.inferred_valuation} (confidence: {node.valuation_confidence:.0%})")
-        
-        if neutral_agents:
-            insights.append(f"NEUTRAL TRADERS ({len(neutral_agents)}): These agents trade at market prices without strong urgency.")
-            for agent_id, node in neutral_agents:
-                insights.append(f"  • {agent_id}: Last traded at ${node.last_trade_price}, values asset around ${node.inferred_valuation} (confidence: {node.valuation_confidence:.0%})")
-        
-        # Price analysis
-        insights.append("\n=== VALUATION PATTERNS ===")
-        valuations = [(node.inferred_valuation, agent_id, node.strategy_type) 
-                     for agent_id, node in agents.items() 
-                     if node.inferred_valuation is not None]
-        
-        if valuations:
-            valuations.sort(reverse=True)  # Highest to lowest
-            highest_val = valuations[0]
-            lowest_val = valuations[-1]
+        # Analyze each agent's narrowed belief sets
+        for agent_id in agents.keys():
+            agent_insights = []
+            agent_insights.append(f"\n--- Agent {agent_id} Beliefs ---")
             
-            insights.append(f"Highest valuation: {highest_val[1]} values at ${highest_val[0]} (strategy: {highest_val[2]})")
-            insights.append(f"Lowest valuation: {lowest_val[1]} values at ${lowest_val[0]} (strategy: {lowest_val[2]})")
+            # Get valuation beliefs
+            valuation_edge = self._get_belief_edge(agent_id, "valuation")
+            if valuation_edge and valuation_edge.value and "possible_valuations" in valuation_edge.value:
+                possible_vals = valuation_edge.value["possible_valuations"]
+                if len(possible_vals) < 9:  # Narrowed from initial 9 values
+                    val_range = f"${min(possible_vals)}-${max(possible_vals)}"
+                    agent_insights.append(f"  • Valuation NARROWED to {len(possible_vals)} possibilities: {val_range}")
+                else:
+                    agent_insights.append(f"  • Valuation: Full range ${min(possible_vals)}-${max(possible_vals)} (no narrowing yet)")
             
-            avg_val = sum(v[0] for v in valuations) / len(valuations)
-            insights.append(f"Average market valuation: ${avg_val:.1f}")
-        
-        # Temporal insights from event history
-        if hasattr(self.belief_graph, 'event_history') and self.belief_graph.event_history:
-            insights.append("\n=== RECENT TRADING SEQUENCE ===")
-            recent_events = self.belief_graph.event_history[-5:]  # Last 5 events
+            # Get market direction beliefs
+            direction_edge = self._get_belief_edge(agent_id, "market_direction")
+            if direction_edge and "possible_directions" in direction_edge.value:
+                possible_dirs = direction_edge.value["possible_directions"]
+                if len(possible_dirs) < 3:  # Narrowed from initial 3 values
+                    agent_insights.append(f"  • Market Direction NARROWED to: {', '.join(possible_dirs)}")
+                else:
+                    agent_insights.append(f"  • Market Direction: All possibilities (up, down, sideways)")
             
-            for i, event in enumerate(recent_events):
-                if event.agent_id in agents:
-                    agent_node = agents[event.agent_id]
-                    insights.append(f"{i+1}. {event.agent_id} ({agent_node.strategy_type}) traded at ${event.price}")
-        
-        # Strategic recommendations
-        insights.append("\n=== STRATEGIC INSIGHTS ===")
-        
-        if aggressive_agents and passive_agents:
-            avg_aggressive_price = sum(node.last_trade_price for _, node in aggressive_agents) / len(aggressive_agents)
-            avg_passive_price = sum(node.last_trade_price for _, node in passive_agents) / len(passive_agents)
+            # Get desperation level beliefs
+            desperation_edge = self._get_belief_edge(agent_id, "desperation_level")
+            if desperation_edge and "possible_desperation" in desperation_edge.value:
+                possible_desp = desperation_edge.value["possible_desperation"]
+                if len(possible_desp) < 3:  # Narrowed from initial 3 values
+                    agent_insights.append(f"  • Desperation NARROWED to: {', '.join(possible_desp)}")
+                else:
+                    agent_insights.append(f"  • Desperation: All levels possible (calm, moderate, desperate)")
             
-            if avg_aggressive_price > avg_passive_price:
-                insights.append(f"Aggressive traders are paying ${avg_aggressive_price - avg_passive_price:.1f} more on average than passive traders.")
-                insights.append("This suggests there may be opportunities to be more patient and get better prices.")
-            else:
-                insights.append("Aggressive and passive traders are getting similar prices, suggesting a balanced market.")
+            # Get available cash beliefs
+            cash_edge = self._get_belief_edge(agent_id, "available_cash")
+            if cash_edge and "possible_cash" in cash_edge.value:
+                possible_cash = cash_edge.value["possible_cash"]
+                if len(possible_cash) < 3:  # Narrowed from initial 3 values
+                    agent_insights.append(f"  • Available Cash NARROWED to: {', '.join(possible_cash)}")
+                else:
+                    agent_insights.append(f"  • Available Cash: All levels possible (low, medium, high)")
+            
+            # Get exit strategy beliefs
+            exit_edge = self._get_belief_edge(agent_id, "exit_strategy")
+            if exit_edge and "possible_exits" in exit_edge.value:
+                possible_exits = exit_edge.value["possible_exits"]
+                if len(possible_exits) < 3:  # Narrowed from initial 3 values
+                    agent_insights.append(f"  • Exit Strategy NARROWED to: {', '.join(possible_exits)}")
+                else:
+                    agent_insights.append(f"  • Exit Strategy: All strategies possible")
+            
+            insights.extend(agent_insights)
+        
+        # Market-wide patterns from narrowed beliefs
+        insights.append("\n=== MARKET PATTERNS FROM BELIEF NARROWING ===")
+        
+        # Count agents with narrowed valuations
+        narrowed_valuations = 0
+        high_valuers = 0
+        low_valuers = 0
+        
+        for agent_id in agents.keys():
+            val_edge = self._get_belief_edge(agent_id, "valuation")
+            if val_edge and val_edge.value and "possible_valuations" in val_edge.value:
+                possible_vals = val_edge.value["possible_valuations"]
+                if len(possible_vals) < 9:
+                    narrowed_valuations += 1
+                    avg_val = sum(possible_vals) / len(possible_vals)
+                    if avg_val > 100:
+                        high_valuers += 1
+                    elif avg_val < 100:
+                        low_valuers += 1
+        
+        if narrowed_valuations > 0:
+            insights.append(f"• {narrowed_valuations} agents have narrowed valuation beliefs")
+            insights.append(f"• {high_valuers} agents likely value asset ABOVE $100")
+            insights.append(f"• {low_valuers} agents likely value asset BELOW $100")
+        
+        # Count agents with narrowed desperation
+        desperate_agents = 0
+        calm_agents = 0
+        
+        for agent_id in agents.keys():
+            desp_edge = self._get_belief_edge(agent_id, "desperation_level")
+            if desp_edge and "possible_desperation" in desp_edge.value:
+                possible_desp = desp_edge.value["possible_desperation"]
+                if len(possible_desp) == 1:
+                    if "desperate" in possible_desp:
+                        desperate_agents += 1
+                    elif "calm" in possible_desp:
+                        calm_agents += 1
+        
+        if desperate_agents > 0 or calm_agents > 0:
+            insights.append(f"• {desperate_agents} agents confirmed as DESPERATE (likely to pay premium)")
+            insights.append(f"• {calm_agents} agents confirmed as CALM (likely to wait for better prices)")
+        
+        # Strategic recommendations based on belief narrowing
+        insights.append("\n=== STRATEGIC RECOMMENDATIONS ===")
+        
+        if high_valuers > low_valuers:
+            insights.append("• BULLISH SIGNAL: More agents likely value asset above $100")
+            insights.append("• Consider pricing orders slightly higher")
+        elif low_valuers > high_valuers:
+            insights.append("• BEARISH SIGNAL: More agents likely value asset below $100")
+            insights.append("• Consider more competitive pricing")
+        
+        if desperate_agents > calm_agents:
+            insights.append("• SELLER OPPORTUNITY: Desperate agents may pay premium prices")
+        elif calm_agents > desperate_agents:
+            insights.append("• BUYER OPPORTUNITY: Calm agents may wait, creating bid opportunities")
         
         return "\n".join(insights)
+
+    def _get_belief_edge(self, agent_id, belief_type):
+        """
+        Helper method to get a specific belief edge for an agent
+        """
+        if not self.belief_graph or not hasattr(self.belief_graph, 'edges'):
+            return None
+        
+        for edge in self.belief_graph.edges.values():
+            if (edge.target_node == agent_id and 
+                edge.belief_type == belief_type):
+                return edge
+        
+        return None
 
     def _format_belief_graph_prompt(self, belief_context, lob, time):
         """
@@ -4612,58 +4685,58 @@ No explanation needed."""
         # Update profit per time
         self.profitpertime = self.profitpertime_update(time, self.birthtime, self.balance)
         
-        bg_logger.debug(f"[BG-RESPOND] {self.tid}: respond() called at time {time:.1f}")
+        gv1_logger.debug(f"[BG-RESPOND] {self.tid}: respond() called at time {time:.1f}")
         
         # Get belief graph context and LLM decision
         belief_context = self._get_belief_graph_context(lob, time)
         
         # COMPREHENSIVE GRAPH VISUALIZATION LOGGING
         if self.belief_graph:
-            bg_logger.info(f"[BG-GRAPH-VIZ] {self.tid}: === COMPLETE BELIEF GRAPH STATE AT TIME {time:.1f} ===")
+            gv1_logger.info(f"[BG-GRAPH-VIZ] {self.tid}: === COMPLETE BELIEF GRAPH STATE AT TIME {time:.1f} ===")
             try:
                 # Log the complete graph as JSON
                 graph_json = self.belief_graph.to_json()
-                bg_logger.info(f"[BG-GRAPH-JSON] {self.tid}:")
-                bg_logger.info("="*80)
-                bg_logger.info(graph_json)
-                bg_logger.info("="*80)
+                gv1_logger.info(f"[BG-GRAPH-JSON] {self.tid}:")
+                gv1_logger.info("="*80)
+                gv1_logger.info(graph_json)
+                gv1_logger.info("="*80)
                 
             except Exception as e:
-                bg_logger.error(f"[BG-GRAPH-ERROR] {self.tid}: Failed to log graph visualization: {e}")
+                gv1_logger.error(f"[BG-GRAPH-ERROR] {self.tid}: Failed to log graph visualization: {e}")
         else:
-            bg_logger.warning(f"[BG-NO-GRAPH] {self.tid}: Belief graph not available for visualization")
+            gv1_logger.warning(f"[BG-NO-GRAPH] {self.tid}: Belief graph not available for visualization")
         
         # Format the prompt with belief graph context
         prompt = self._format_belief_graph_prompt(belief_context, lob, time)
         
         # COMPREHENSIVE PROMPT LOGGING
-        bg_logger.info(f"[BG-PROMPT] {self.tid}: === COMPLETE LLM PROMPT AT TIME {time:.1f} ===")
-        bg_logger.info("="*80)
-        bg_logger.info(prompt)
-        bg_logger.info("="*80)
+        gv1_logger.info(f"[BG-PROMPT] {self.tid}: === COMPLETE LLM PROMPT AT TIME {time:.1f} ===")
+        gv1_logger.info("="*80)
+        gv1_logger.info(prompt)
+        gv1_logger.info("="*80)
         
         # Get LLM decision
         decision = self._get_llm_trading_decision(prompt)
         
         # Log the LLM response
-        bg_logger.info(f"[BG-DECISION] {self.tid}: === LLM DECISION AT TIME {time:.1f} ===")
-        bg_logger.info(f"  Action: {decision['action']}")
-        bg_logger.info(f"  Price: {decision.get('price', 'N/A')}")
-        bg_logger.info(f"  Reasoning: {decision.get('reasoning', 'N/A')}")
+        gv1_logger.info(f"[BG-DECISION] {self.tid}: === LLM DECISION AT TIME {time:.1f} ===")
+        gv1_logger.info(f"  Action: {decision['action']}")
+        gv1_logger.info(f"  Price: {decision.get('price', 'N/A')}")
+        gv1_logger.info(f"  Reasoning: {decision.get('reasoning', 'N/A')}")
         
         # Log Chain of Thought analysis if available
         if 'natural_cot' in decision and decision['natural_cot']:
-            bg_logger.info(f"[BG-COT] {self.tid}: === CHAIN OF THOUGHT REASONING ===")
-            bg_logger.info(f"[BG-COT-REASONING] {self.tid}: {decision['natural_cot']}")
+            gv1_logger.info(f"[BG-COT] {self.tid}: === CHAIN OF THOUGHT REASONING ===")
+            gv1_logger.info(f"[BG-COT-REASONING] {self.tid}: {decision['natural_cot']}")
         
         # Log market context for analysis
-        bg_logger.info(f"[BG-CONTEXT] {self.tid}: Market context at decision time:")
-        bg_logger.info(f"  Current Job: {self.job}")
-        bg_logger.info(f"  Balance: ${self.balance}")
-        bg_logger.info(f"  Inventory: {self.inventory}")
-        bg_logger.info(f"  Best Bid: {lob['bids']['best'] if lob['bids']['n'] > 0 else 'None'}")
-        bg_logger.info(f"  Best Ask: {lob['asks']['best'] if lob['asks']['n'] > 0 else 'None'}")
-        bg_logger.info(f"  Last Purchase Price: {self.last_purchase_price}")
+        gv1_logger.info(f"[BG-CONTEXT] {self.tid}: Market context at decision time:")
+        gv1_logger.info(f"  Current Job: {self.job}")
+        gv1_logger.info(f"  Balance: ${self.balance}")
+        gv1_logger.info(f"  Inventory: {self.inventory}")
+        gv1_logger.info(f"  Best Bid: {lob['bids']['best'] if lob['bids']['n'] > 0 else 'None'}")
+        gv1_logger.info(f"  Best Ask: {lob['asks']['best'] if lob['asks']['n'] > 0 else 'None'}")
+        gv1_logger.info(f"  Last Purchase Price: {self.last_purchase_price}")
         
         # Log the decision
         self.trading_history.append({
@@ -4677,15 +4750,15 @@ No explanation needed."""
             self.trading_history = self.trading_history[-self.max_history:]
 
         # Act on the decision
-        bg_logger.debug(f"[BG-EXECUTE] {self.tid}: Executing decision - job={self.job}, decision={decision['action']}")
+        gv1_logger.debug(f"[BG-EXECUTE] {self.tid}: Executing decision - job={self.job}, decision={decision['action']}")
         if decision['action'] == 'BUY' and self.job == 'Buy':
-            bg_logger.debug(f"[BG-BUY-EXECUTE] {self.tid}: Executing BUY decision at price {decision.get('price', 'N/A')}")
+            gv1_logger.debug(f"[BG-BUY-EXECUTE] {self.tid}: Executing BUY decision at price {decision.get('price', 'N/A')}")
             self._execute_buy_decision(decision, lob, time)
         elif decision['action'] == 'SELL' and self.job == 'Sell':
-            bg_logger.debug(f"[BG-SELL-EXECUTE] {self.tid}: Executing SELL decision at price {decision.get('price', 'N/A')}")
+            gv1_logger.debug(f"[BG-SELL-EXECUTE] {self.tid}: Executing SELL decision at price {decision.get('price', 'N/A')}")
             self._execute_sell_decision(decision, lob, time)
         else:
-            bg_logger.debug(f"[BG-NO-ACTION] {self.tid}: No action taken - job={self.job}, decision={decision['action']}")
+            gv1_logger.debug(f"[BG-NO-ACTION] {self.tid}: No action taken - job={self.job}, decision={decision['action']}")
 
     def _execute_buy_decision(self, decision, lob, time):
         """
@@ -4741,7 +4814,7 @@ No explanation needed."""
             self.inventory = 1
             self.job = 'Sell'  # Switch to selling mode
             
-            bg_logger.info(f"📦 BG Trader BOUGHT at ${transactionprice} | Balance: ${self.balance}")
+            gv1_logger.info(f"📦 BG Trader BOUGHT at ${transactionprice} | Balance: ${self.balance}")
             print(f"🧠 BG Trader {self.tid} BOUGHT at ${transactionprice} | Balance: ${self.balance}")
             
             # Log the state change
@@ -4766,11 +4839,11 @@ No explanation needed."""
                 else:
                     self.failed_trades += 1
                     emoji = "🔴"
-                bg_logger.info(f"{emoji} BG Trader SOLD at ${transactionprice} | Profit: ${profit} | Total Profit: ${self.total_profit:.2f}")
+                gv1_logger.info(f"{emoji} BG Trader SOLD at ${transactionprice} | Profit: ${profit} | Total Profit: ${self.total_profit:.2f}")
                 print(f"{emoji} BG Trader {self.tid} SOLD at ${transactionprice} | Profit: ${profit} | Total Profit: ${self.total_profit:.2f}")
             else:
                 profit = 0
-                bg_logger.info(f"🔴 BG Trader SOLD at ${transactionprice} | No purchase price recorded")
+                gv1_logger.info(f"🔴 BG Trader SOLD at ${transactionprice} | No purchase price recorded")
                 print(f"🔴 BG Trader {self.tid} SOLD at ${transactionprice} | No purchase price recorded")
             
             self.inventory = 0
@@ -4814,8 +4887,8 @@ class GraphVar2(Trader):
         
         # Import belief graph components
         try:
-            from belief_graph import BeliefGraph, MarketEvent, EventType
-            self.belief_graph = BeliefGraph(asset_id="BSE_ASSET")
+            from belief_graph import GraphVar2, MarketEvent, EventType
+            self.belief_graph = GraphVar2(asset_id="BSE_ASSET")
             self.MarketEvent = MarketEvent
             self.EventType = EventType
         except ImportError:
@@ -4847,9 +4920,9 @@ class GraphVar2(Trader):
         if self.api_key:
             genai.configure(api_key=self.api_key)
             self.model = genai.GenerativeModel(self.model_name)
-            bg_logger.info(f"Initialized BG (Belief Graph + CoT) trader {tid} with model {self.model_name}")
+            gv2_logger.info(f"Initialized BG (Belief Graph + CoT) trader {tid} with model {self.model_name}")
         else:
-            bg_logger.warning(f"No API key provided for BG (Belief Graph + CoT) trader {tid}")
+            gv2_logger.warning(f"No API key provided for BG (Belief Graph + CoT) trader {tid}")
             self.model = None
         
         # Trading state (same as LLM trader)
@@ -4912,20 +4985,20 @@ class GraphVar2(Trader):
             return
         
         # DEBUG: Log raw event data from BSE
-        bg_logger.debug(f"[BG-RAW-EVENT] {self.tid}: Processing raw event: {event}")
+        gv2_logger.debug(f"[BG-RAW-EVENT] {self.tid}: Processing raw event: {event}")
         
         # Determine event type
         if event['type'] == 'Trade':
             event_type = self.EventType.TRADE
-            bg_logger.debug(f"[BG-EVENT-TYPE] {self.tid}: Detected TRADE event")
+            gv2_logger.debug(f"[BG-EVENT-TYPE] {self.tid}: Detected TRADE event")
         elif event['type'] == 'Bid':
             event_type = self.EventType.BID
-            bg_logger.debug(f"[BG-EVENT-TYPE] {self.tid}: Detected BID event")
+            gv2_logger.debug(f"[BG-EVENT-TYPE] {self.tid}: Detected BID event")
         elif event['type'] == 'Ask':
             event_type = self.EventType.ASK
-            bg_logger.debug(f"[BG-EVENT-TYPE] {self.tid}: Detected ASK event")
+            gv2_logger.debug(f"[BG-EVENT-TYPE] {self.tid}: Detected ASK event")
         else:
-            bg_logger.debug(f"[BG-EVENT-SKIP] {self.tid}: Skipping unknown event type: {event['type']}")
+            gv2_logger.debug(f"[BG-EVENT-SKIP] {self.tid}: Skipping unknown event type: {event['type']}")
             return  # Skip other event types
         
         # Create market event for belief graph
@@ -4940,11 +5013,11 @@ class GraphVar2(Trader):
         )
         
         # DEBUG: Log parsed market event
-        bg_logger.debug(f"[BG-PARSED-EVENT] {self.tid}: Created MarketEvent - Type: {event_type.value}, Agent: {market_event.agent_id}, Price: {market_event.price}")
+        gv2_logger.debug(f"[BG-PARSED-EVENT] {self.tid}: Created MarketEvent - Type: {event_type.value}, Agent: {market_event.agent_id}, Price: {market_event.price}")
         
         # Update belief graph
         self.belief_graph.update_beliefs(market_event)
-        bg_logger.debug(f"[BG-UPDATED] {self.tid}: Belief graph updated with {event_type.value} event")
+        gv2_logger.debug(f"[BG-UPDATED] {self.tid}: Belief graph updated with {event_type.value} event")
 
     def _get_belief_graph_context(self, lob, time):
         """
@@ -4982,7 +5055,7 @@ class GraphVar2(Trader):
 
     def _generate_natural_language_insights(self):
         """
-        Convert the belief graph JSON into natural language insights for the LLM
+        Convert the discrete belief graph into natural language insights for the LLM
         """
         if not self.belief_graph:
             return "No belief graph available."
@@ -4996,79 +5069,134 @@ class GraphVar2(Trader):
         if not agents:
             return "No other agents observed yet."
         
-        # Analyze trading patterns
-        insights.append("=== MARKET BEHAVIOR ANALYSIS ===")
+        insights.append("=== DISCRETE BELIEF ANALYSIS ===")
         
-        # Group agents by strategy
-        aggressive_agents = []
-        passive_agents = []
-        neutral_agents = []
-        
-        for agent_id, node in agents.items():
-            if node.strategy_type == "aggressive":
-                aggressive_agents.append((agent_id, node))
-            elif node.strategy_type == "passive":
-                passive_agents.append((agent_id, node))
-            else:
-                neutral_agents.append((agent_id, node))
-        
-        # Strategy insights
-        if aggressive_agents:
-            insights.append(f"AGGRESSIVE TRADERS ({len(aggressive_agents)}): These agents tend to pay premium prices or accept lower selling prices to execute trades quickly.")
-            for agent_id, node in aggressive_agents:
-                insights.append(f"  • {agent_id}: Last traded at ${node.last_trade_price}, values asset around ${node.inferred_valuation} (confidence: {node.valuation_confidence:.0%})")
-        
-        if passive_agents:
-            insights.append(f"PASSIVE TRADERS ({len(passive_agents)}): These agents wait for better prices and are more patient.")
-            for agent_id, node in passive_agents:
-                insights.append(f"  • {agent_id}: Last traded at ${node.last_trade_price}, values asset around ${node.inferred_valuation} (confidence: {node.valuation_confidence:.0%})")
-        
-        if neutral_agents:
-            insights.append(f"NEUTRAL TRADERS ({len(neutral_agents)}): These agents trade at market prices without strong urgency.")
-            for agent_id, node in neutral_agents:
-                insights.append(f"  • {agent_id}: Last traded at ${node.last_trade_price}, values asset around ${node.inferred_valuation} (confidence: {node.valuation_confidence:.0%})")
-        
-        # Price analysis
-        insights.append("\n=== VALUATION PATTERNS ===")
-        valuations = [(node.inferred_valuation, agent_id, node.strategy_type) 
-                     for agent_id, node in agents.items() 
-                     if node.inferred_valuation is not None]
-        
-        if valuations:
-            valuations.sort(reverse=True)  # Highest to lowest
-            highest_val = valuations[0]
-            lowest_val = valuations[-1]
+        # Analyze each agent's narrowed belief sets
+        for agent_id in agents.keys():
+            agent_insights = []
+            agent_insights.append(f"\n--- Agent {agent_id} Beliefs ---")
             
-            insights.append(f"Highest valuation: {highest_val[1]} values at ${highest_val[0]} (strategy: {highest_val[2]})")
-            insights.append(f"Lowest valuation: {lowest_val[1]} values at ${lowest_val[0]} (strategy: {lowest_val[2]})")
+            # Get valuation beliefs
+            valuation_edge = self._get_belief_edge(agent_id, "valuation")
+            if valuation_edge and valuation_edge.value and "possible_valuations" in valuation_edge.value:
+                possible_vals = valuation_edge.value["possible_valuations"]
+                if len(possible_vals) < 9:  # Narrowed from initial 9 values
+                    val_range = f"${min(possible_vals)}-${max(possible_vals)}"
+                    agent_insights.append(f"  • Valuation NARROWED to {len(possible_vals)} possibilities: {val_range}")
+                else:
+                    agent_insights.append(f"  • Valuation: Full range ${min(possible_vals)}-${max(possible_vals)} (no narrowing yet)")
             
-            avg_val = sum(v[0] for v in valuations) / len(valuations)
-            insights.append(f"Average market valuation: ${avg_val:.1f}")
-        
-        # Temporal insights from event history
-        if hasattr(self.belief_graph, 'event_history') and self.belief_graph.event_history:
-            insights.append("\n=== RECENT TRADING SEQUENCE ===")
-            recent_events = self.belief_graph.event_history[-5:]  # Last 5 events
+            # Get market direction beliefs
+            direction_edge = self._get_belief_edge(agent_id, "market_direction")
+            if direction_edge and "possible_directions" in direction_edge.value:
+                possible_dirs = direction_edge.value["possible_directions"]
+                if len(possible_dirs) < 3:  # Narrowed from initial 3 values
+                    agent_insights.append(f"  • Market Direction NARROWED to: {', '.join(possible_dirs)}")
+                else:
+                    agent_insights.append(f"  • Market Direction: All possibilities (up, down, sideways)")
             
-            for i, event in enumerate(recent_events):
-                if event.agent_id in agents:
-                    agent_node = agents[event.agent_id]
-                    insights.append(f"{i+1}. {event.agent_id} ({agent_node.strategy_type}) traded at ${event.price}")
-        
-        # Strategic recommendations
-        insights.append("\n=== STRATEGIC INSIGHTS ===")
-        
-        if aggressive_agents and passive_agents:
-            avg_aggressive_price = sum(node.last_trade_price for _, node in aggressive_agents) / len(aggressive_agents)
-            avg_passive_price = sum(node.last_trade_price for _, node in passive_agents) / len(passive_agents)
+            # Get desperation level beliefs
+            desperation_edge = self._get_belief_edge(agent_id, "desperation_level")
+            if desperation_edge and "possible_desperation" in desperation_edge.value:
+                possible_desp = desperation_edge.value["possible_desperation"]
+                if len(possible_desp) < 3:  # Narrowed from initial 3 values
+                    agent_insights.append(f"  • Desperation NARROWED to: {', '.join(possible_desp)}")
+                else:
+                    agent_insights.append(f"  • Desperation: All levels possible (calm, moderate, desperate)")
             
-            if avg_aggressive_price > avg_passive_price:
-                insights.append(f"Aggressive traders are paying ${avg_aggressive_price - avg_passive_price:.1f} more on average than passive traders.")
-                insights.append("This suggests there may be opportunities to be more patient and get better prices.")
-            else:
-                insights.append("Aggressive and passive traders are getting similar prices, suggesting a balanced market.")
+            # Get available cash beliefs
+            cash_edge = self._get_belief_edge(agent_id, "available_cash")
+            if cash_edge and "possible_cash" in cash_edge.value:
+                possible_cash = cash_edge.value["possible_cash"]
+                if len(possible_cash) < 3:  # Narrowed from initial 3 values
+                    agent_insights.append(f"  • Available Cash NARROWED to: {', '.join(possible_cash)}")
+                else:
+                    agent_insights.append(f"  • Available Cash: All levels possible (low, medium, high)")
+            
+            # Get exit strategy beliefs
+            exit_edge = self._get_belief_edge(agent_id, "exit_strategy")
+            if exit_edge and "possible_exits" in exit_edge.value:
+                possible_exits = exit_edge.value["possible_exits"]
+                if len(possible_exits) < 3:  # Narrowed from initial 3 values
+                    agent_insights.append(f"  • Exit Strategy NARROWED to: {', '.join(possible_exits)}")
+                else:
+                    agent_insights.append(f"  • Exit Strategy: All strategies possible")
+            
+            insights.extend(agent_insights)
+        
+        # Market-wide patterns from narrowed beliefs
+        insights.append("\n=== MARKET PATTERNS FROM BELIEF NARROWING ===")
+        
+        # Count agents with narrowed valuations
+        narrowed_valuations = 0
+        high_valuers = 0
+        low_valuers = 0
+        
+        for agent_id in agents.keys():
+            val_edge = self._get_belief_edge(agent_id, "valuation")
+            if val_edge and val_edge.value and "possible_valuations" in val_edge.value:
+                possible_vals = val_edge.value["possible_valuations"]
+                if len(possible_vals) < 9:
+                    narrowed_valuations += 1
+                    avg_val = sum(possible_vals) / len(possible_vals)
+                    if avg_val > 100:
+                        high_valuers += 1
+                    elif avg_val < 100:
+                        low_valuers += 1
+        
+        if narrowed_valuations > 0:
+            insights.append(f"• {narrowed_valuations} agents have narrowed valuation beliefs")
+            insights.append(f"• {high_valuers} agents likely value asset ABOVE $100")
+            insights.append(f"• {low_valuers} agents likely value asset BELOW $100")
+        
+        # Count agents with narrowed desperation
+        desperate_agents = 0
+        calm_agents = 0
+        
+        for agent_id in agents.keys():
+            desp_edge = self._get_belief_edge(agent_id, "desperation_level")
+            if desp_edge and "possible_desperation" in desp_edge.value:
+                possible_desp = desp_edge.value["possible_desperation"]
+                if len(possible_desp) == 1:
+                    if "desperate" in possible_desp:
+                        desperate_agents += 1
+                    elif "calm" in possible_desp:
+                        calm_agents += 1
+        
+        if desperate_agents > 0 or calm_agents > 0:
+            insights.append(f"• {desperate_agents} agents confirmed as DESPERATE (likely to pay premium)")
+            insights.append(f"• {calm_agents} agents confirmed as CALM (likely to wait for better prices)")
+        
+        # Strategic recommendations based on belief narrowing
+        insights.append("\n=== STRATEGIC RECOMMENDATIONS ===")
+        
+        if high_valuers > low_valuers:
+            insights.append("• BULLISH SIGNAL: More agents likely value asset above $100")
+            insights.append("• Consider pricing orders slightly higher")
+        elif low_valuers > high_valuers:
+            insights.append("• BEARISH SIGNAL: More agents likely value asset below $100")
+            insights.append("• Consider more competitive pricing")
+        
+        if desperate_agents > calm_agents:
+            insights.append("• SELLER OPPORTUNITY: Desperate agents may pay premium prices")
+        elif calm_agents > desperate_agents:
+            insights.append("• BUYER OPPORTUNITY: Calm agents may wait, creating bid opportunities")
         
         return "\n".join(insights)
+
+    def _get_belief_edge(self, agent_id, belief_type):
+        """
+        Helper method to get a specific belief edge for an agent
+        """
+        if not self.belief_graph or not hasattr(self.belief_graph, 'edges'):
+            return None
+        
+        for edge in self.belief_graph.edges.values():
+            if (edge.target_node == agent_id and 
+                edge.belief_type == belief_type):
+                return edge
+        
+        return None
 
     def _format_belief_graph_prompt(self, belief_context, lob, time):
         """
@@ -5458,58 +5586,58 @@ No explanation needed."""
         # Update profit per time
         self.profitpertime = self.profitpertime_update(time, self.birthtime, self.balance)
         
-        bg_logger.debug(f"[BG-RESPOND] {self.tid}: respond() called at time {time:.1f}")
+        gv2_logger.debug(f"[BG-RESPOND] {self.tid}: respond() called at time {time:.1f}")
         
         # Get belief graph context and LLM decision
         belief_context = self._get_belief_graph_context(lob, time)
         
         # COMPREHENSIVE GRAPH VISUALIZATION LOGGING
         if self.belief_graph:
-            bg_logger.info(f"[BG-GRAPH-VIZ] {self.tid}: === COMPLETE BELIEF GRAPH STATE AT TIME {time:.1f} ===")
+            gv2_logger.info(f"[BG-GRAPH-VIZ] {self.tid}: === COMPLETE BELIEF GRAPH STATE AT TIME {time:.1f} ===")
             try:
                 # Log the complete graph as JSON
                 graph_json = self.belief_graph.to_json()
-                bg_logger.info(f"[BG-GRAPH-JSON] {self.tid}:")
-                bg_logger.info("="*80)
-                bg_logger.info(graph_json)
-                bg_logger.info("="*80)
+                gv2_logger.info(f"[BG-GRAPH-JSON] {self.tid}:")
+                gv2_logger.info("="*80)
+                gv2_logger.info(graph_json)
+                gv2_logger.info("="*80)
                 
             except Exception as e:
-                bg_logger.error(f"[BG-GRAPH-ERROR] {self.tid}: Failed to log graph visualization: {e}")
+                gv2_logger.error(f"[BG-GRAPH-ERROR] {self.tid}: Failed to log graph visualization: {e}")
         else:
-            bg_logger.warning(f"[BG-NO-GRAPH] {self.tid}: Belief graph not available for visualization")
+            gv2_logger.warning(f"[BG-NO-GRAPH] {self.tid}: Belief graph not available for visualization")
         
         # Format the prompt with belief graph context
         prompt = self._format_belief_graph_prompt(belief_context, lob, time)
         
         # COMPREHENSIVE PROMPT LOGGING
-        bg_logger.info(f"[BG-PROMPT] {self.tid}: === COMPLETE LLM PROMPT AT TIME {time:.1f} ===")
-        bg_logger.info("="*80)
-        bg_logger.info(prompt)
-        bg_logger.info("="*80)
+        gv2_logger.info(f"[BG-PROMPT] {self.tid}: === COMPLETE LLM PROMPT AT TIME {time:.1f} ===")
+        gv2_logger.info("="*80)
+        gv2_logger.info(prompt)
+        gv2_logger.info("="*80)
         
         # Get LLM decision
         decision = self._get_llm_trading_decision(prompt)
         
         # Log the LLM response
-        bg_logger.info(f"[BG-DECISION] {self.tid}: === LLM DECISION AT TIME {time:.1f} ===")
-        bg_logger.info(f"  Action: {decision['action']}")
-        bg_logger.info(f"  Price: {decision.get('price', 'N/A')}")
-        bg_logger.info(f"  Reasoning: {decision.get('reasoning', 'N/A')}")
+        gv2_logger.info(f"[BG-DECISION] {self.tid}: === LLM DECISION AT TIME {time:.1f} ===")
+        gv2_logger.info(f"  Action: {decision['action']}")
+        gv2_logger.info(f"  Price: {decision.get('price', 'N/A')}")
+        gv2_logger.info(f"  Reasoning: {decision.get('reasoning', 'N/A')}")
         
         # Log Chain of Thought analysis if available
         if 'natural_cot' in decision and decision['natural_cot']:
-            bg_logger.info(f"[BG-COT] {self.tid}: === CHAIN OF THOUGHT REASONING ===")
-            bg_logger.info(f"[BG-COT-REASONING] {self.tid}: {decision['natural_cot']}")
+            gv2_logger.info(f"[BG-COT] {self.tid}: === CHAIN OF THOUGHT REASONING ===")
+            gv2_logger.info(f"[BG-COT-REASONING] {self.tid}: {decision['natural_cot']}")
         
         # Log market context for analysis
-        bg_logger.info(f"[BG-CONTEXT] {self.tid}: Market context at decision time:")
-        bg_logger.info(f"  Current Job: {self.job}")
-        bg_logger.info(f"  Balance: ${self.balance}")
-        bg_logger.info(f"  Inventory: {self.inventory}")
-        bg_logger.info(f"  Best Bid: {lob['bids']['best'] if lob['bids']['n'] > 0 else 'None'}")
-        bg_logger.info(f"  Best Ask: {lob['asks']['best'] if lob['asks']['n'] > 0 else 'None'}")
-        bg_logger.info(f"  Last Purchase Price: {self.last_purchase_price}")
+        gv2_logger.info(f"[BG-CONTEXT] {self.tid}: Market context at decision time:")
+        gv2_logger.info(f"  Current Job: {self.job}")
+        gv2_logger.info(f"  Balance: ${self.balance}")
+        gv2_logger.info(f"  Inventory: {self.inventory}")
+        gv2_logger.info(f"  Best Bid: {lob['bids']['best'] if lob['bids']['n'] > 0 else 'None'}")
+        gv2_logger.info(f"  Best Ask: {lob['asks']['best'] if lob['asks']['n'] > 0 else 'None'}")
+        gv2_logger.info(f"  Last Purchase Price: {self.last_purchase_price}")
         
         # Log the decision
         self.trading_history.append({
@@ -5523,15 +5651,15 @@ No explanation needed."""
             self.trading_history = self.trading_history[-self.max_history:]
 
         # Act on the decision
-        bg_logger.debug(f"[BG-EXECUTE] {self.tid}: Executing decision - job={self.job}, decision={decision['action']}")
+        gv2_logger.debug(f"[BG-EXECUTE] {self.tid}: Executing decision - job={self.job}, decision={decision['action']}")
         if decision['action'] == 'BUY' and self.job == 'Buy':
-            bg_logger.debug(f"[BG-BUY-EXECUTE] {self.tid}: Executing BUY decision at price {decision.get('price', 'N/A')}")
+            gv2_logger.debug(f"[BG-BUY-EXECUTE] {self.tid}: Executing BUY decision at price {decision.get('price', 'N/A')}")
             self._execute_buy_decision(decision, lob, time)
         elif decision['action'] == 'SELL' and self.job == 'Sell':
-            bg_logger.debug(f"[BG-SELL-EXECUTE] {self.tid}: Executing SELL decision at price {decision.get('price', 'N/A')}")
+            gv2_logger.debug(f"[BG-SELL-EXECUTE] {self.tid}: Executing SELL decision at price {decision.get('price', 'N/A')}")
             self._execute_sell_decision(decision, lob, time)
         else:
-            bg_logger.debug(f"[BG-NO-ACTION] {self.tid}: No action taken - job={self.job}, decision={decision['action']}")
+            gv2_logger.debug(f"[BG-NO-ACTION] {self.tid}: No action taken - job={self.job}, decision={decision['action']}")
 
     def _execute_buy_decision(self, decision, lob, time):
         """
@@ -5587,7 +5715,7 @@ No explanation needed."""
             self.inventory = 1
             self.job = 'Sell'  # Switch to selling mode
             
-            bg_logger.info(f"📦 BG Trader BOUGHT at ${transactionprice} | Balance: ${self.balance}")
+            gv2_logger.info(f"📦 BG Trader BOUGHT at ${transactionprice} | Balance: ${self.balance}")
             print(f"🧠 BG Trader {self.tid} BOUGHT at ${transactionprice} | Balance: ${self.balance}")
             
             # Log the state change
@@ -5612,11 +5740,11 @@ No explanation needed."""
                 else:
                     self.failed_trades += 1
                     emoji = "🔴"
-                bg_logger.info(f"{emoji} BG Trader SOLD at ${transactionprice} | Profit: ${profit} | Total Profit: ${self.total_profit:.2f}")
+                gv2_logger.info(f"{emoji} BG Trader SOLD at ${transactionprice} | Profit: ${profit} | Total Profit: ${self.total_profit:.2f}")
                 print(f"{emoji} BG Trader {self.tid} SOLD at ${transactionprice} | Profit: ${profit} | Total Profit: ${self.total_profit:.2f}")
             else:
                 profit = 0
-                bg_logger.info(f"🔴 BG Trader SOLD at ${transactionprice} | No purchase price recorded")
+                gv2_logger.info(f"🔴 BG Trader SOLD at ${transactionprice} | No purchase price recorded")
                 print(f"🔴 BG Trader {self.tid} SOLD at ${transactionprice} | No purchase price recorded")
             
             self.inventory = 0
@@ -8411,6 +8539,10 @@ def populate_market(trdrs_spec, traders, shuffle, vrbs):
             return TraderPerfectGraphWithCoT('PGCO', name, proptrader_balance, parameters, time0)
         elif robottype == 'PGNO':
             return TraderPerfectGraphWithoutCoT('PGNO', name, proptrader_balance, parameters, time0)
+        elif robottype == 'GV1':
+            return GraphVar1('GV1', name, proptrader_balance, parameters, time0)
+        elif robottype == 'GV2':
+            return GraphVar2('GV2', name, proptrader_balance, parameters, time0)
         else:
             sys.exit('FATAL: don\'t know trader type %s\n' % robottype)
 
@@ -8790,7 +8922,7 @@ def calculate_prop_trader_net_worth(traders, lob=None):
     net_worths = {}
     
     for tid, trader in traders.items():
-        if trader.ttype in ['PT1', 'PT2', 'LLM', 'BG', 'BGNO', 'PGCO', 'PGNO']:
+        if trader.ttype in ['PT1', 'PT2', 'LLM', 'BG', 'BGNO', 'PGCO', 'PGNO', 'GV1', 'GV2']:
             net_worth = trader.balance
             
             # Check if trader is holding inventory
@@ -8944,7 +9076,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     # Initialize proprietary trader net worth tracking
     prop_net_worth_file = open(sess_id + '_prop_net_worths.csv', 'w')
     prop_net_worth_writer = csv.writer(prop_net_worth_file)
-    prop_net_worth_writer.writerow(['Timestamp', 'PT1_NetWorth', 'PT2_NetWorth', 'LLM_NetWorth', 'BG_NetWorth'])
+    prop_net_worth_writer.writerow(['Timestamp', 'PT1_NetWorth', 'PT2_NetWorth', 'LLM_NetWorth', 'BG_NetWorth', 'BGNO_NetWorth', 'PGCO_NetWorth', 'PGNO_NetWorth', 'GV1_NetWorth', 'GV2_NetWorth'])
         
     # initialise the exchange
     exchange = Exchange()
@@ -9030,7 +9162,12 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
                     net_worths.get('PT1', 500),  # Default to starting balance if no data
                     net_worths.get('PT2', 500),
                     net_worths.get('LLM', 500),
-                    net_worths.get('BG', 500)
+                    net_worths.get('BG', 500),
+                    net_worths.get('BGNO', 500),
+                    net_worths.get('PGCO', 500),
+                    net_worths.get('PGNO', 500),
+                    net_worths.get('GV1', 500),
+                    net_worths.get('GV2', 500)
                 ])
 
             # traders respond to whatever happened
@@ -9083,7 +9220,7 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     
     prop_traders = []
     for tid, trader in traders.items():
-        if trader.ttype in ['PT1', 'PT2', 'LLM', 'BG', 'BGNO', 'PGCO', 'PGNO']:
+        if trader.ttype in ['PT1', 'PT2', 'LLM', 'BG', 'BGNO', 'PGCO', 'PGNO', 'GV1', 'GV2']:
             net_worth = trader.balance
             
             # Check if trader is holding inventory
@@ -9325,7 +9462,7 @@ if __name__ == "__main__":
         # proptraders_spec specifies strategies played by proprietary-traders, and how many of each
         proptraders_spec = [('PT1', 1, {'bid_percent': 0.95, 'ask_delta': 2, 'n_past_trades': 5}), 
                            ('PT2', 1, {'bid_percent': 0.99, 'ask_delta': 2, 'n_past_trades': 5}),
-                           ('LLM', 1), ('BG', 1), ('BGNO', 1), ('PGCO', 1), ('PGNO', 1)]
+                           ('LLM', 1), ('BG', 1), ('BGNO', 1), ('PGCO', 1), ('PGNO', 1), ('GV1', 1), ('GV2', 1)]
 
         # trader_spec wraps up the specifications for the buyers, sellers, and proptraders
         traders_spec = {'sellers': sellers_spec, 'buyers': buyers_spec, 'proptraders': proptraders_spec}
