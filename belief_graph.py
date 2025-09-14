@@ -616,6 +616,932 @@ class BeliefGraph:
         }
 
 
+
+class GraphVar1:
+    """
+    Main belief graph class for managing agent beliefs and market state.
+    
+    The belief graph maintains:
+    - Nodes for each agent and the traded asset
+    - Edges representing beliefs about other agents' valuations and strategies
+    - Probabilistic updates based on market events
+    - Query interface for decision-making
+    """
+    
+    def __init__(self, asset_id: str = "DEFAULT_ASSET"):
+        self.graph_id = str(uuid.uuid4())
+        self.asset_id = asset_id
+        self.nodes: Dict[str, AgentNode | AssetNode] = {}
+        self.edges: Dict[str, BeliefEdge] = {}
+        self.event_history: List[MarketEvent] = []
+        self.current_time = 0.0
+        
+        # Initialize the asset node
+        self.asset_node = AssetNode(asset_id=asset_id)
+        self.nodes[asset_id] = self.asset_node
+        
+        # Belief update parameters
+        self.valuation_decay_rate = 0.95  # How quickly old valuation beliefs decay
+        self.confidence_boost = 0.1  # How much confidence increases with new evidence
+        self.max_confidence = 0.95  # Maximum confidence level
+        
+    def add_agent(self, agent_id: str) -> None:
+        """Add a new agent to the belief graph"""
+        if agent_id not in self.nodes:
+            agent_node = AgentNode(agent_id=agent_id)
+            self.nodes[agent_id] = agent_node
+            
+            # Add initial beliefs about this agent
+            self._add_initial_beliefs(agent_id)
+    
+    def _add_initial_beliefs(self, agent_id: str) -> None:
+        """Add initial beliefs about a new agent"""
+        # Add belief about agent's strategy (initially unknown)
+        strategy_edge = BeliefEdge(
+            edge_id=str(uuid.uuid4()),
+            source_node=self.asset_id,
+            target_node=agent_id,
+            belief_type="strategy",
+            confidence=0.1,
+            value="unknown",
+            timestamp=self.current_time
+        )
+        self.edges[strategy_edge.edge_id] = strategy_edge
+        
+        # Add belief about agent's valuation (initially unknown)
+        valuation_edge = BeliefEdge(
+            edge_id=str(uuid.uuid4()),
+            source_node=self.asset_id,
+            target_node=agent_id,
+            belief_type="valuation",
+            confidence=0.1,
+            value=None,
+            timestamp=self.current_time
+        )
+        self.edges[valuation_edge.edge_id] = valuation_edge
+    
+    def update_beliefs(self, event: MarketEvent) -> None:
+        """
+        Update the belief graph based on a market event.
+        
+        This is the core function that ingests market events and revises
+        the belief graph accordingly.
+        """
+        self.current_time = event.timestamp
+        self.event_history.append(event)
+        
+        # Ensure the agent exists in the graph
+        if event.agent_id and event.agent_id not in self.nodes:
+            self.add_agent(event.agent_id)
+        
+        # Update based on event type
+        if event.event_type == EventType.BID:
+            self._update_beliefs_from_bid(event)
+        elif event.event_type == EventType.ASK:
+            self._update_beliefs_from_ask(event)
+        elif event.event_type == EventType.TRADE:
+            self._update_beliefs_from_trade(event)
+        elif event.event_type == EventType.CANCEL:
+            self._update_beliefs_from_cancel(event)
+        
+        # Update asset state
+        self._update_asset_state()
+        
+        # Decay old beliefs
+        self._decay_old_beliefs()
+    
+    def _update_beliefs_from_bid(self, event: MarketEvent) -> None:
+        """Update beliefs based on a bid event"""
+        if not event.agent_id or event.price is None:
+            return
+            
+        agent_node = self.nodes[event.agent_id]
+        agent_node.last_bid_price = event.price
+        agent_node.last_activity = event.timestamp
+        
+        # Update valuation belief
+        self._update_valuation_belief(event.agent_id, event.price, "bid")
+    
+    def _update_beliefs_from_ask(self, event: MarketEvent) -> None:
+        """Update beliefs based on an ask event"""
+        if not event.agent_id or event.price is None:
+            return
+            
+        agent_node = self.nodes[event.agent_id]
+        agent_node.last_ask_price = event.price
+        agent_node.last_activity = event.timestamp
+        
+        # Update valuation belief
+        self._update_valuation_belief(event.agent_id, event.price, "ask")
+    
+    def _update_beliefs_from_trade(self, event: MarketEvent) -> None:
+        """Update beliefs based on a trade event"""
+        print(f"[BG-DEBUG] _update_beliefs_from_trade called for agent {event.agent_id} at price {event.price}")
+        if not event.agent_id or event.price is None:
+            return
+            
+        agent_node = self.nodes[event.agent_id]
+        old_aggr = agent_node.aggressiveness_score
+        agent_node.last_trade_price = event.price
+        agent_node.total_trades += 1
+        agent_node.total_volume += event.quantity or 1
+        agent_node.last_activity = event.timestamp
+        
+        # Update valuation belief with high confidence (actual trade)
+        self._update_valuation_belief(event.agent_id, event.price, "trade", high_confidence=True)
+        
+        # Update aggressiveness based on trade price compared to previous trades
+        if self.asset_node.last_trade_price and agent_node.total_trades > 1:
+            price_ratio = event.price / self.asset_node.last_trade_price
+            print(f"[BG-TRADE-AGGR] Agent {event.agent_id}: price={event.price}, last_price={self.asset_node.last_trade_price}, ratio={price_ratio:.3f}")
+            
+            # Buyer perspective (assuming agent_id is buyer in BSE)
+            if price_ratio > 1.01:  # Paid >1% more than last trade
+                agent_node.aggressiveness_score = min(1.0, agent_node.aggressiveness_score + 0.3)
+                print(f"[BG-TRADE-AGGR] AGGRESSIVE buyer: paid {price_ratio-1:.1%} more")
+            elif price_ratio < 0.99:  # Paid <1% less than last trade  
+                agent_node.aggressiveness_score = max(-1.0, agent_node.aggressiveness_score - 0.2)
+                print(f"[BG-TRADE-AGGR] PASSIVE buyer: paid {1-price_ratio:.1%} less")
+            else:
+                # Near market price - slight shift toward passive
+                agent_node.aggressiveness_score = max(-1.0, agent_node.aggressiveness_score - 0.05)
+                print(f"[BG-TRADE-AGGR] NEUTRAL trade")
+        else:
+            # First trade - random initial aggressiveness
+            import random
+            agent_node.aggressiveness_score = random.uniform(-0.3, 0.3)
+            print(f"[BG-TRADE-AGGR] First trade, random initial aggr={agent_node.aggressiveness_score:.3f}")
+        
+        print(f"[BG-TRADE-AGGR] Agent {event.agent_id} aggr: {old_aggr:.3f} -> {agent_node.aggressiveness_score:.3f}")
+        
+        # Update strategy belief based on trade
+        self._update_strategy_belief(event.agent_id, "trade", event.price)
+        
+        # Also update counterparty if available
+        if event.counterparty_id and event.counterparty_id in self.nodes:
+            seller_node = self.nodes[event.counterparty_id]
+            old_seller_aggr = seller_node.aggressiveness_score
+            seller_node.last_trade_price = event.price
+            seller_node.total_trades += 1
+            seller_node.total_volume += event.quantity or 1
+            
+            # Seller perspective - opposite of buyer
+            if self.asset_node.last_trade_price and seller_node.total_trades > 1:
+                price_ratio = event.price / self.asset_node.last_trade_price
+                
+                if price_ratio < 0.99:  # Sold <1% below last trade
+                    seller_node.aggressiveness_score = min(1.0, seller_node.aggressiveness_score + 0.3)
+                    print(f"[BG-TRADE-AGGR] AGGRESSIVE seller {event.counterparty_id}: sold {1-price_ratio:.1%} below")
+                elif price_ratio > 1.01:  # Sold >1% above last trade
+                    seller_node.aggressiveness_score = max(-1.0, seller_node.aggressiveness_score - 0.2)
+                    print(f"[BG-TRADE-AGGR] PASSIVE seller {event.counterparty_id}: sold {price_ratio-1:.1%} above")
+                else:
+                    seller_node.aggressiveness_score = max(-1.0, seller_node.aggressiveness_score - 0.05)
+            else:
+                # First trade - random initial
+                import random
+                seller_node.aggressiveness_score = random.uniform(-0.3, 0.3)
+                
+            print(f"[BG-TRADE-AGGR] Seller {event.counterparty_id} aggr: {old_seller_aggr:.3f} -> {seller_node.aggressiveness_score:.3f}")
+            
+            # Update seller strategy
+            self._update_valuation_belief(event.counterparty_id, event.price, "trade", high_confidence=True)
+            self._update_strategy_belief(event.counterparty_id, "trade", event.price)
+        
+        # Update asset state
+        self.asset_node.last_trade_price = event.price
+        self.asset_node.volume_traded += event.quantity or 1
+    
+    def _update_beliefs_from_cancel(self, event: MarketEvent) -> None:
+        """Update beliefs based on a cancel event"""
+        if not event.agent_id:
+            return
+            
+        agent_node = self.nodes[event.agent_id]
+        agent_node.last_activity = event.timestamp
+        
+        # Cancellation might indicate uncertainty or strategy change
+        agent_node.aggressiveness_score = max(-1.0, agent_node.aggressiveness_score - 0.05)
+    
+    def _update_valuation_belief(self, agent_id: str, price: float, action_type: str, high_confidence: bool = False) -> None:
+        """Update the belief about an agent's valuation"""
+        # Find existing valuation edge
+        valuation_edge = None
+        for edge in self.edges.values():
+            if (edge.source_node == self.asset_id and 
+                edge.target_node == agent_id and 
+                edge.belief_type == "valuation"):
+                valuation_edge = edge
+                break
+        
+        if valuation_edge is None:
+            # Create new valuation edge
+            valuation_edge = BeliefEdge(
+                edge_id=str(uuid.uuid4()),
+                source_node=self.asset_id,
+                target_node=agent_id,
+                belief_type="valuation",
+                confidence=0.3 if high_confidence else 0.1,
+                value=price,
+                timestamp=self.current_time
+            )
+            self.edges[valuation_edge.edge_id] = valuation_edge
+        else:
+            # Update existing valuation belief
+            old_value = valuation_edge.value
+            old_confidence = valuation_edge.confidence
+            
+            # Weighted average of old and new values
+            if old_value is not None:
+                if high_confidence:
+                    # Trade events get higher weight
+                    new_value = 0.7 * price + 0.3 * old_value
+                    new_confidence = min(self.max_confidence, old_confidence + 0.3)
+                else:
+                    # Bid/ask events get lower weight
+                    new_value = 0.3 * price + 0.7 * old_value
+                    new_confidence = min(self.max_confidence, old_confidence + 0.1)
+            else:
+                new_value = price
+                new_confidence = 0.3 if high_confidence else 0.1
+            
+            valuation_edge.value = new_value
+            valuation_edge.confidence = new_confidence
+            valuation_edge.timestamp = self.current_time
+            valuation_edge.evidence_count += 1
+            
+            # Sync the agent node's valuation fields
+            agent_node = self.nodes[agent_id]
+            agent_node.inferred_valuation = new_value
+            agent_node.valuation_confidence = new_confidence
+    
+    def _update_strategy_belief(self, agent_id: str, action_type: str, price: float) -> None:
+        """Update the belief about an agent's strategy"""
+        print(f"[BG-STRAT-START] Updating strategy for {agent_id}, action={action_type}, price={price}")
+        
+        # Find existing strategy edge
+        strategy_edge = None
+        for edge in self.edges.values():
+            if (edge.source_node == self.asset_id and 
+                edge.target_node == agent_id and 
+                edge.belief_type == "strategy"):
+                strategy_edge = edge
+                break
+        
+        if strategy_edge is None:
+            print(f"[BG-STRAT-ERROR] No strategy edge found for {agent_id}")
+            return
+        
+        # Simple strategy classification based on behavior patterns
+        agent_node = self.nodes[agent_id]
+        
+        print(f"[BG-STRAT-INFO] Agent {agent_id}: trades={agent_node.total_trades}, aggr_score={agent_node.aggressiveness_score:.3f}, current_strategy={agent_node.strategy_type}")
+        
+        # Always classify based on aggressiveness, even if no trades yet
+        old_strategy = agent_node.strategy_type
+        
+        # Use more sensitive thresholds
+        if agent_node.aggressiveness_score > 0.15:
+            strategy = "aggressive"
+        elif agent_node.aggressiveness_score < -0.15:
+            strategy = "passive"
+        else:
+            strategy = "neutral"
+        
+        print(f"[BG-STRAT-CLASSIFY] Agent {agent_id}: aggr={agent_node.aggressiveness_score:.3f} -> strategy={strategy} (was {old_strategy})")
+        
+        strategy_edge.value = strategy
+        strategy_edge.confidence = min(self.max_confidence, strategy_edge.confidence + 0.1)
+        strategy_edge.timestamp = self.current_time
+        strategy_edge.evidence_count += 1
+        
+        # Sync the agent node's strategy_type field
+        agent_node.strategy_type = strategy
+        
+        print(f"[BG-STRAT-END] Agent {agent_id} strategy updated to {strategy} (confidence={strategy_edge.confidence:.2f})")
+    
+    def _update_asset_state(self) -> None:
+        """Update the asset node state based on current market conditions"""
+        # This would typically be called with actual market data
+        # For now, we'll update based on the belief graph state
+        
+        # Calculate spread if we have both bid and ask
+        if (self.asset_node.current_best_bid is not None and 
+            self.asset_node.current_best_ask is not None):
+            self.asset_node.spread_width = self.asset_node.current_best_ask - self.asset_node.current_best_bid
+    
+    def _decay_old_beliefs(self) -> None:
+        """Decay confidence in old beliefs"""
+        current_time = self.current_time
+        for edge in self.edges.values():
+            time_diff = current_time - edge.timestamp
+            if time_diff > 100:  # Decay beliefs older than 100 time units
+                decay_factor = self.valuation_decay_rate ** (time_diff / 100)
+                edge.confidence *= decay_factor
+    
+    def query_action(self, agent_id: str, current_market_state: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Query the belief graph for decision-making.
+        
+        This function serializes the belief graph and returns it in a format
+        suitable for LLM processing.
+        """
+        # Update asset state with current market data
+        if 'best_bid' in current_market_state:
+            self.asset_node.current_best_bid = current_market_state['best_bid']
+        if 'best_ask' in current_market_state:
+            self.asset_node.current_best_ask = current_market_state['best_ask']
+        if 'last_trade' in current_market_state:
+            self.asset_node.last_trade_price = current_market_state['last_trade']
+        
+        # Prepare the belief graph for LLM consumption
+        belief_graph_data = {
+            'graph_id': self.graph_id,
+            'current_time': self.current_time,
+            'asset_state': self.asset_node.to_dict(),
+            'agents': {},
+            'beliefs': [],
+            'recent_events': []
+        }
+        
+        # Add agent information
+        for node_id, node in self.nodes.items():
+            if isinstance(node, AgentNode):
+                belief_graph_data['agents'][node_id] = node.to_dict()
+        
+        # Add belief edges
+        for edge in self.edges.values():
+            belief_graph_data['beliefs'].append(edge.to_dict())
+        
+        # Add recent events (last 10)
+        recent_events = self.event_history[-10:] if len(self.event_history) > 10 else self.event_history
+        belief_graph_data['recent_events'] = [event.to_dict() for event in recent_events]
+        
+        # Add strategic insights
+        belief_graph_data['strategic_insights'] = self._generate_strategic_insights(agent_id)
+        
+        return belief_graph_data
+    
+    def _generate_strategic_insights(self, agent_id: str) -> Dict[str, Any]:
+        """Generate strategic insights for the querying agent"""
+        insights = {
+            'competitors': [],
+            'market_opportunities': [],
+            'risk_factors': []
+        }
+        
+        # Analyze competitors
+        for node_id, node in self.nodes.items():
+            if isinstance(node, AgentNode) and node_id != agent_id:
+                competitor_info = {
+                    'agent_id': node_id,
+                    'strategy': node.strategy_type or "unknown",
+                    'aggressiveness': node.aggressiveness_score,
+                    'valuation_estimate': node.inferred_valuation,
+                    'confidence': node.valuation_confidence,
+                    'recent_activity': node.last_activity
+                }
+                insights['competitors'].append(competitor_info)
+        
+        # Identify market opportunities
+        if (self.asset_node.current_best_bid is not None and 
+            self.asset_node.current_best_ask is not None):
+            spread = self.asset_node.current_best_ask - self.asset_node.current_best_bid
+            if spread > 5:  # Arbitrage opportunity
+                insights['market_opportunities'].append({
+                    'type': 'arbitrage',
+                    'spread': spread,
+                    'description': f"Large spread of {spread} points"
+                })
+        
+        # Identify risk factors
+        if self.asset_node.price_volatility > 0.1:
+            insights['risk_factors'].append({
+                'type': 'high_volatility',
+                'value': self.asset_node.price_volatility,
+                'description': "High price volatility detected"
+            })
+        
+        return insights
+    
+    def to_json(self) -> str:
+        """Serialize the belief graph to JSON"""
+        graph_data = {
+            'graph_id': self.graph_id,
+            'asset_id': self.asset_id,
+            'current_time': self.current_time,
+            'nodes': {node_id: node.to_dict() for node_id, node in self.nodes.items()},
+            'edges': {edge_id: edge.to_dict() for edge_id, edge in self.edges.items()},
+            'event_history': [event.to_dict() for event in self.event_history[-50:]]  # Last 50 events
+        }
+        return json.dumps(graph_data, indent=2)
+    
+    def from_json(self, json_str: str) -> None:
+        """Deserialize the belief graph from JSON"""
+        data = json.loads(json_str)
+        self.graph_id = data['graph_id']
+        self.asset_id = data['asset_id']
+        self.current_time = data['current_time']
+        
+        # Reconstruct nodes
+        self.nodes.clear()
+        for node_id, node_data in data['nodes'].items():
+            if node_data['node_type'] == NodeType.AGENT.value:
+                self.nodes[node_id] = AgentNode(**node_data)
+            elif node_data['node_type'] == NodeType.ASSET.value:
+                self.nodes[node_id] = AssetNode(**node_data)
+        
+        # Reconstruct edges
+        self.edges.clear()
+        for edge_id, edge_data in data['edges'].items():
+            self.edges[edge_id] = BeliefEdge(**edge_data)
+        
+        # Reconstruct event history
+        self.event_history = [MarketEvent(**event_data) for event_data in data['event_history']]
+    
+    def get_agent_beliefs(self, agent_id: str) -> Dict[str, Any]:
+        """Get all beliefs about a specific agent"""
+        beliefs = {}
+        for edge in self.edges.values():
+            if edge.target_node == agent_id:
+                if edge.belief_type not in beliefs:
+                    beliefs[edge.belief_type] = []
+                beliefs[edge.belief_type].append(edge.to_dict())
+        return beliefs
+    
+    def get_market_summary(self) -> Dict[str, Any]:
+        """Get a summary of the current market state"""
+        return {
+            'asset_state': self.asset_node.to_dict(),
+            'active_agents': len([n for n in self.nodes.values() if isinstance(n, AgentNode)]),
+            'total_beliefs': len(self.edges),
+            'recent_events': len(self.event_history),
+            'current_time': self.current_time
+        }
+
+
+class GraphVar2:
+    """
+    Main belief graph class for managing agent beliefs and market state.
+    
+    The belief graph maintains:
+    - Nodes for each agent and the traded asset
+    - Edges representing beliefs about other agents' valuations and strategies
+    - Probabilistic updates based on market events
+    - Query interface for decision-making
+    """
+    
+    def __init__(self, asset_id: str = "DEFAULT_ASSET"):
+        self.graph_id = str(uuid.uuid4())
+        self.asset_id = asset_id
+        self.nodes: Dict[str, AgentNode | AssetNode] = {}
+        self.edges: Dict[str, BeliefEdge] = {}
+        self.event_history: List[MarketEvent] = []
+        self.current_time = 0.0
+        
+        # Initialize the asset node
+        self.asset_node = AssetNode(asset_id=asset_id)
+        self.nodes[asset_id] = self.asset_node
+        
+        # Belief update parameters
+        self.valuation_decay_rate = 0.95  # How quickly old valuation beliefs decay
+        self.confidence_boost = 0.1  # How much confidence increases with new evidence
+        self.max_confidence = 0.95  # Maximum confidence level
+        
+    def add_agent(self, agent_id: str) -> None:
+        """Add a new agent to the belief graph"""
+        if agent_id not in self.nodes:
+            agent_node = AgentNode(agent_id=agent_id)
+            self.nodes[agent_id] = agent_node
+            
+            # Add initial beliefs about this agent
+            self._add_initial_beliefs(agent_id)
+    
+    def _add_initial_beliefs(self, agent_id: str) -> None:
+        """Add initial beliefs about a new agent"""
+        # Add belief about agent's strategy (initially unknown)
+        strategy_edge = BeliefEdge(
+            edge_id=str(uuid.uuid4()),
+            source_node=self.asset_id,
+            target_node=agent_id,
+            belief_type="strategy",
+            confidence=0.1,
+            value="unknown",
+            timestamp=self.current_time
+        )
+        self.edges[strategy_edge.edge_id] = strategy_edge
+        
+        # Add belief about agent's valuation (initially unknown)
+        valuation_edge = BeliefEdge(
+            edge_id=str(uuid.uuid4()),
+            source_node=self.asset_id,
+            target_node=agent_id,
+            belief_type="valuation",
+            confidence=0.1,
+            value=None,
+            timestamp=self.current_time
+        )
+        self.edges[valuation_edge.edge_id] = valuation_edge
+    
+    def update_beliefs(self, event: MarketEvent) -> None:
+        """
+        Update the belief graph based on a market event.
+        
+        This is the core function that ingests market events and revises
+        the belief graph accordingly.
+        """
+        self.current_time = event.timestamp
+        self.event_history.append(event)
+        
+        # Ensure the agent exists in the graph
+        if event.agent_id and event.agent_id not in self.nodes:
+            self.add_agent(event.agent_id)
+        
+        # Update based on event type
+        if event.event_type == EventType.BID:
+            self._update_beliefs_from_bid(event)
+        elif event.event_type == EventType.ASK:
+            self._update_beliefs_from_ask(event)
+        elif event.event_type == EventType.TRADE:
+            self._update_beliefs_from_trade(event)
+        elif event.event_type == EventType.CANCEL:
+            self._update_beliefs_from_cancel(event)
+        
+        # Update asset state
+        self._update_asset_state()
+        
+        # Decay old beliefs
+        self._decay_old_beliefs()
+    
+    def _update_beliefs_from_bid(self, event: MarketEvent) -> None:
+        """Update beliefs based on a bid event"""
+        if not event.agent_id or event.price is None:
+            return
+            
+        agent_node = self.nodes[event.agent_id]
+        agent_node.last_bid_price = event.price
+        agent_node.last_activity = event.timestamp
+        
+        # Update valuation belief
+        self._update_valuation_belief(event.agent_id, event.price, "bid")
+    
+    def _update_beliefs_from_ask(self, event: MarketEvent) -> None:
+        """Update beliefs based on an ask event"""
+        if not event.agent_id or event.price is None:
+            return
+            
+        agent_node = self.nodes[event.agent_id]
+        agent_node.last_ask_price = event.price
+        agent_node.last_activity = event.timestamp
+        
+        # Update valuation belief
+        self._update_valuation_belief(event.agent_id, event.price, "ask")
+    
+    def _update_beliefs_from_trade(self, event: MarketEvent) -> None:
+        """Update beliefs based on a trade event"""
+        print(f"[BG-DEBUG] _update_beliefs_from_trade called for agent {event.agent_id} at price {event.price}")
+        if not event.agent_id or event.price is None:
+            return
+            
+        agent_node = self.nodes[event.agent_id]
+        old_aggr = agent_node.aggressiveness_score
+        agent_node.last_trade_price = event.price
+        agent_node.total_trades += 1
+        agent_node.total_volume += event.quantity or 1
+        agent_node.last_activity = event.timestamp
+        
+        # Update valuation belief with high confidence (actual trade)
+        self._update_valuation_belief(event.agent_id, event.price, "trade", high_confidence=True)
+        
+        # Update aggressiveness based on trade price compared to previous trades
+        if self.asset_node.last_trade_price and agent_node.total_trades > 1:
+            price_ratio = event.price / self.asset_node.last_trade_price
+            print(f"[BG-TRADE-AGGR] Agent {event.agent_id}: price={event.price}, last_price={self.asset_node.last_trade_price}, ratio={price_ratio:.3f}")
+            
+            # Buyer perspective (assuming agent_id is buyer in BSE)
+            if price_ratio > 1.01:  # Paid >1% more than last trade
+                agent_node.aggressiveness_score = min(1.0, agent_node.aggressiveness_score + 0.3)
+                print(f"[BG-TRADE-AGGR] AGGRESSIVE buyer: paid {price_ratio-1:.1%} more")
+            elif price_ratio < 0.99:  # Paid <1% less than last trade  
+                agent_node.aggressiveness_score = max(-1.0, agent_node.aggressiveness_score - 0.2)
+                print(f"[BG-TRADE-AGGR] PASSIVE buyer: paid {1-price_ratio:.1%} less")
+            else:
+                # Near market price - slight shift toward passive
+                agent_node.aggressiveness_score = max(-1.0, agent_node.aggressiveness_score - 0.05)
+                print(f"[BG-TRADE-AGGR] NEUTRAL trade")
+        else:
+            # First trade - random initial aggressiveness
+            import random
+            agent_node.aggressiveness_score = random.uniform(-0.3, 0.3)
+            print(f"[BG-TRADE-AGGR] First trade, random initial aggr={agent_node.aggressiveness_score:.3f}")
+        
+        print(f"[BG-TRADE-AGGR] Agent {event.agent_id} aggr: {old_aggr:.3f} -> {agent_node.aggressiveness_score:.3f}")
+        
+        # Update strategy belief based on trade
+        self._update_strategy_belief(event.agent_id, "trade", event.price)
+        
+        # Also update counterparty if available
+        if event.counterparty_id and event.counterparty_id in self.nodes:
+            seller_node = self.nodes[event.counterparty_id]
+            old_seller_aggr = seller_node.aggressiveness_score
+            seller_node.last_trade_price = event.price
+            seller_node.total_trades += 1
+            seller_node.total_volume += event.quantity or 1
+            
+            # Seller perspective - opposite of buyer
+            if self.asset_node.last_trade_price and seller_node.total_trades > 1:
+                price_ratio = event.price / self.asset_node.last_trade_price
+                
+                if price_ratio < 0.99:  # Sold <1% below last trade
+                    seller_node.aggressiveness_score = min(1.0, seller_node.aggressiveness_score + 0.3)
+                    print(f"[BG-TRADE-AGGR] AGGRESSIVE seller {event.counterparty_id}: sold {1-price_ratio:.1%} below")
+                elif price_ratio > 1.01:  # Sold >1% above last trade
+                    seller_node.aggressiveness_score = max(-1.0, seller_node.aggressiveness_score - 0.2)
+                    print(f"[BG-TRADE-AGGR] PASSIVE seller {event.counterparty_id}: sold {price_ratio-1:.1%} above")
+                else:
+                    seller_node.aggressiveness_score = max(-1.0, seller_node.aggressiveness_score - 0.05)
+            else:
+                # First trade - random initial
+                import random
+                seller_node.aggressiveness_score = random.uniform(-0.3, 0.3)
+                
+            print(f"[BG-TRADE-AGGR] Seller {event.counterparty_id} aggr: {old_seller_aggr:.3f} -> {seller_node.aggressiveness_score:.3f}")
+            
+            # Update seller strategy
+            self._update_valuation_belief(event.counterparty_id, event.price, "trade", high_confidence=True)
+            self._update_strategy_belief(event.counterparty_id, "trade", event.price)
+        
+        # Update asset state
+        self.asset_node.last_trade_price = event.price
+        self.asset_node.volume_traded += event.quantity or 1
+    
+    def _update_beliefs_from_cancel(self, event: MarketEvent) -> None:
+        """Update beliefs based on a cancel event"""
+        if not event.agent_id:
+            return
+            
+        agent_node = self.nodes[event.agent_id]
+        agent_node.last_activity = event.timestamp
+        
+        # Cancellation might indicate uncertainty or strategy change
+        agent_node.aggressiveness_score = max(-1.0, agent_node.aggressiveness_score - 0.05)
+    
+    def _update_valuation_belief(self, agent_id: str, price: float, action_type: str, high_confidence: bool = False) -> None:
+        """Update the belief about an agent's valuation"""
+        # Find existing valuation edge
+        valuation_edge = None
+        for edge in self.edges.values():
+            if (edge.source_node == self.asset_id and 
+                edge.target_node == agent_id and 
+                edge.belief_type == "valuation"):
+                valuation_edge = edge
+                break
+        
+        if valuation_edge is None:
+            # Create new valuation edge
+            valuation_edge = BeliefEdge(
+                edge_id=str(uuid.uuid4()),
+                source_node=self.asset_id,
+                target_node=agent_id,
+                belief_type="valuation",
+                confidence=0.3 if high_confidence else 0.1,
+                value=price,
+                timestamp=self.current_time
+            )
+            self.edges[valuation_edge.edge_id] = valuation_edge
+        else:
+            # Update existing valuation belief
+            old_value = valuation_edge.value
+            old_confidence = valuation_edge.confidence
+            
+            # Weighted average of old and new values
+            if old_value is not None:
+                if high_confidence:
+                    # Trade events get higher weight
+                    new_value = 0.7 * price + 0.3 * old_value
+                    new_confidence = min(self.max_confidence, old_confidence + 0.3)
+                else:
+                    # Bid/ask events get lower weight
+                    new_value = 0.3 * price + 0.7 * old_value
+                    new_confidence = min(self.max_confidence, old_confidence + 0.1)
+            else:
+                new_value = price
+                new_confidence = 0.3 if high_confidence else 0.1
+            
+            valuation_edge.value = new_value
+            valuation_edge.confidence = new_confidence
+            valuation_edge.timestamp = self.current_time
+            valuation_edge.evidence_count += 1
+            
+            # Sync the agent node's valuation fields
+            agent_node = self.nodes[agent_id]
+            agent_node.inferred_valuation = new_value
+            agent_node.valuation_confidence = new_confidence
+    
+    def _update_strategy_belief(self, agent_id: str, action_type: str, price: float) -> None:
+        """Update the belief about an agent's strategy"""
+        print(f"[BG-STRAT-START] Updating strategy for {agent_id}, action={action_type}, price={price}")
+        
+        # Find existing strategy edge
+        strategy_edge = None
+        for edge in self.edges.values():
+            if (edge.source_node == self.asset_id and 
+                edge.target_node == agent_id and 
+                edge.belief_type == "strategy"):
+                strategy_edge = edge
+                break
+        
+        if strategy_edge is None:
+            print(f"[BG-STRAT-ERROR] No strategy edge found for {agent_id}")
+            return
+        
+        # Simple strategy classification based on behavior patterns
+        agent_node = self.nodes[agent_id]
+        
+        print(f"[BG-STRAT-INFO] Agent {agent_id}: trades={agent_node.total_trades}, aggr_score={agent_node.aggressiveness_score:.3f}, current_strategy={agent_node.strategy_type}")
+        
+        # Always classify based on aggressiveness, even if no trades yet
+        old_strategy = agent_node.strategy_type
+        
+        # Use more sensitive thresholds
+        if agent_node.aggressiveness_score > 0.15:
+            strategy = "aggressive"
+        elif agent_node.aggressiveness_score < -0.15:
+            strategy = "passive"
+        else:
+            strategy = "neutral"
+        
+        print(f"[BG-STRAT-CLASSIFY] Agent {agent_id}: aggr={agent_node.aggressiveness_score:.3f} -> strategy={strategy} (was {old_strategy})")
+        
+        strategy_edge.value = strategy
+        strategy_edge.confidence = min(self.max_confidence, strategy_edge.confidence + 0.1)
+        strategy_edge.timestamp = self.current_time
+        strategy_edge.evidence_count += 1
+        
+        # Sync the agent node's strategy_type field
+        agent_node.strategy_type = strategy
+        
+        print(f"[BG-STRAT-END] Agent {agent_id} strategy updated to {strategy} (confidence={strategy_edge.confidence:.2f})")
+    
+    def _update_asset_state(self) -> None:
+        """Update the asset node state based on current market conditions"""
+        # This would typically be called with actual market data
+        # For now, we'll update based on the belief graph state
+        
+        # Calculate spread if we have both bid and ask
+        if (self.asset_node.current_best_bid is not None and 
+            self.asset_node.current_best_ask is not None):
+            self.asset_node.spread_width = self.asset_node.current_best_ask - self.asset_node.current_best_bid
+    
+    def _decay_old_beliefs(self) -> None:
+        """Decay confidence in old beliefs"""
+        current_time = self.current_time
+        for edge in self.edges.values():
+            time_diff = current_time - edge.timestamp
+            if time_diff > 100:  # Decay beliefs older than 100 time units
+                decay_factor = self.valuation_decay_rate ** (time_diff / 100)
+                edge.confidence *= decay_factor
+    
+    def query_action(self, agent_id: str, current_market_state: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Query the belief graph for decision-making.
+        
+        This function serializes the belief graph and returns it in a format
+        suitable for LLM processing.
+        """
+        # Update asset state with current market data
+        if 'best_bid' in current_market_state:
+            self.asset_node.current_best_bid = current_market_state['best_bid']
+        if 'best_ask' in current_market_state:
+            self.asset_node.current_best_ask = current_market_state['best_ask']
+        if 'last_trade' in current_market_state:
+            self.asset_node.last_trade_price = current_market_state['last_trade']
+        
+        # Prepare the belief graph for LLM consumption
+        belief_graph_data = {
+            'graph_id': self.graph_id,
+            'current_time': self.current_time,
+            'asset_state': self.asset_node.to_dict(),
+            'agents': {},
+            'beliefs': [],
+            'recent_events': []
+        }
+        
+        # Add agent information
+        for node_id, node in self.nodes.items():
+            if isinstance(node, AgentNode):
+                belief_graph_data['agents'][node_id] = node.to_dict()
+        
+        # Add belief edges
+        for edge in self.edges.values():
+            belief_graph_data['beliefs'].append(edge.to_dict())
+        
+        # Add recent events (last 10)
+        recent_events = self.event_history[-10:] if len(self.event_history) > 10 else self.event_history
+        belief_graph_data['recent_events'] = [event.to_dict() for event in recent_events]
+        
+        # Add strategic insights
+        belief_graph_data['strategic_insights'] = self._generate_strategic_insights(agent_id)
+        
+        return belief_graph_data
+    
+    def _generate_strategic_insights(self, agent_id: str) -> Dict[str, Any]:
+        """Generate strategic insights for the querying agent"""
+        insights = {
+            'competitors': [],
+            'market_opportunities': [],
+            'risk_factors': []
+        }
+        
+        # Analyze competitors
+        for node_id, node in self.nodes.items():
+            if isinstance(node, AgentNode) and node_id != agent_id:
+                competitor_info = {
+                    'agent_id': node_id,
+                    'strategy': node.strategy_type or "unknown",
+                    'aggressiveness': node.aggressiveness_score,
+                    'valuation_estimate': node.inferred_valuation,
+                    'confidence': node.valuation_confidence,
+                    'recent_activity': node.last_activity
+                }
+                insights['competitors'].append(competitor_info)
+        
+        # Identify market opportunities
+        if (self.asset_node.current_best_bid is not None and 
+            self.asset_node.current_best_ask is not None):
+            spread = self.asset_node.current_best_ask - self.asset_node.current_best_bid
+            if spread > 5:  # Arbitrage opportunity
+                insights['market_opportunities'].append({
+                    'type': 'arbitrage',
+                    'spread': spread,
+                    'description': f"Large spread of {spread} points"
+                })
+        
+        # Identify risk factors
+        if self.asset_node.price_volatility > 0.1:
+            insights['risk_factors'].append({
+                'type': 'high_volatility',
+                'value': self.asset_node.price_volatility,
+                'description': "High price volatility detected"
+            })
+        
+        return insights
+    
+    def to_json(self) -> str:
+        """Serialize the belief graph to JSON"""
+        graph_data = {
+            'graph_id': self.graph_id,
+            'asset_id': self.asset_id,
+            'current_time': self.current_time,
+            'nodes': {node_id: node.to_dict() for node_id, node in self.nodes.items()},
+            'edges': {edge_id: edge.to_dict() for edge_id, edge in self.edges.items()},
+            'event_history': [event.to_dict() for event in self.event_history[-50:]]  # Last 50 events
+        }
+        return json.dumps(graph_data, indent=2)
+    
+    def from_json(self, json_str: str) -> None:
+        """Deserialize the belief graph from JSON"""
+        data = json.loads(json_str)
+        self.graph_id = data['graph_id']
+        self.asset_id = data['asset_id']
+        self.current_time = data['current_time']
+        
+        # Reconstruct nodes
+        self.nodes.clear()
+        for node_id, node_data in data['nodes'].items():
+            if node_data['node_type'] == NodeType.AGENT.value:
+                self.nodes[node_id] = AgentNode(**node_data)
+            elif node_data['node_type'] == NodeType.ASSET.value:
+                self.nodes[node_id] = AssetNode(**node_data)
+        
+        # Reconstruct edges
+        self.edges.clear()
+        for edge_id, edge_data in data['edges'].items():
+            self.edges[edge_id] = BeliefEdge(**edge_data)
+        
+        # Reconstruct event history
+        self.event_history = [MarketEvent(**event_data) for event_data in data['event_history']]
+    
+    def get_agent_beliefs(self, agent_id: str) -> Dict[str, Any]:
+        """Get all beliefs about a specific agent"""
+        beliefs = {}
+        for edge in self.edges.values():
+            if edge.target_node == agent_id:
+                if edge.belief_type not in beliefs:
+                    beliefs[edge.belief_type] = []
+                beliefs[edge.belief_type].append(edge.to_dict())
+        return beliefs
+    
+    def get_market_summary(self) -> Dict[str, Any]:
+        """Get a summary of the current market state"""
+        return {
+            'asset_state': self.asset_node.to_dict(),
+            'active_agents': len([n for n in self.nodes.values() if isinstance(n, AgentNode)]),
+            'total_beliefs': len(self.edges),
+            'recent_events': len(self.event_history),
+            'current_time': self.current_time
+        }
+
 # Example usage and testing functions
 def create_sample_belief_graph() -> BeliefGraph:
     """Create a sample belief graph for testing"""
