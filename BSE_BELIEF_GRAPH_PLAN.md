@@ -1,7 +1,3 @@
-# BSE Belief Graph Implementation Plan
-
-## Final BSE Belief Structure (Based on Hanabi + Strategic Fields)
-
 ### Variation 1 - Pure Discrete (GraphVar1)
 ```json
 {
@@ -145,52 +141,3 @@
   }
 }
 ```
-
-## Implementation Tasks
-
-### 1. Modify GraphVar1 Methods (Pure Discrete)
-- **`_add_initial_beliefs(agent_id)`**: Create discrete possible value sets for each belief type
-- **`_update_beliefs_from_bid/ask/trade()`**: Use set elimination logic (like Hanabi clue elimination)
-- **`query_action()`**: Return discrete possibilities in new JSON structure
-- **Remove confidence mixing**: No more single values + confidence scores
-
-### 2. Modify GraphVar2 Methods (Pure Probabilistic)  
-- **`_add_initial_beliefs(agent_id)`**: Create uniform probability distributions
-- **`_update_beliefs_from_bid/ask/trade()`**: Bayesian probability updates based on market events
-- **`query_action()`**: Return probability distributions in new JSON structure
-- **Pure distributions**: No confidence scores, only probability weights
-
-### 3. Strategic Field Focus
-High-impact fields for BSE success:
-- **Valuation beliefs** (competitor valuation uncertainty → arbitrage opportunities)
-- **Market direction beliefs** (prediction disagreements → timing advantages)  
-- **Desperation/urgency levels** (timing pressure modeling → panic trade exploitation)
-- **Entry price optimization** (tactical bidding decisions → profit maximization)
-- **Available cash** (resource constraints → competitive positioning)
-- **Exit strategy** (hold vs sell timing → market impact prediction)
-
-### 4. BSE.py Integration Updates
-- Detect trader type and route to correct GraphVar1/GraphVar2 class
-- Minimal changes - leverage existing `query_action()` architecture
-- Update imports if needed
-
-### 5. Update Logic (Hanabi-Style)
-- **Discrete elimination**: Remove impossible values based on market events
-- **Probabilistic reweighting**: Bayesian updates on distributions
-- **Recursive Theory of Mind**: Track "what I think P01 thinks about themselves"
-- **Market event inference**: Bid/ask/trade events eliminate possibilities or update probabilities
-
-## Key Principles
-- **Pure to specification**: 1:1 correspondence with Rahul's Hanabi structure
-- **No confidence mixing**: Discrete sets OR probability distributions, not both
-- **Strategic focus**: Fields that create real arbitrage opportunities in BSE
-- **Symmetric structure**: Consistent naming between My_Beliefs and Competitor_Beliefs
-- **Edit existing methods**: No new files, modify current GraphVar1/GraphVar2 implementations
-- **Recursive beliefs**: "My beliefs about myself" vs "My beliefs about what P01 thinks about themselves"
-
-## Success Metrics
-- LLM agents can exploit valuation gaps between competitors
-- Market direction disagreements create timing advantages
-- Desperation level tracking enables panic trade exploitation  
-- Entry price optimization improves profit margins
-- Resource constraint awareness improves competitive positioning
