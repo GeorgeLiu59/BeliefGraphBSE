@@ -1,0 +1,635 @@
+#!/usr/bin/env python3
+"""
+Unified Prompt Configuration for All Trading Agents
+
+All LLM trading agents import their prompts from this single source.
+Prompts are organized by:
+1. Core system prompts (scaffolding-independent)
+2. JSON belief graph scaffolding
+3. Natural language belief graph scaffolding
+4. Trading action prompts
+5. CoT reasoning prompts
+
+NO FALLBACKS. NO DEFENSIVE CODE. DIRECT EXECUTION.
+"""
+
+from typing import Dict, Any, Optional, List
+
+
+class BasePrompts:
+    """Core prompts shared across all agents"""
+
+    MARKET_FUNDAMENTALS = """
+MARKET EDUCATION:
+- Price ranges typically between $1-$500 in this market
+- The market operates as a continuous double auction with a limit order book
+- Orders are matched when bid prices meet or exceed ask prices
+- You can place BID orders (to buy) or ASK orders (to sell)
+
+HOW ORDER BOOKS WORK:
+- To BUY: Place a BID order at your desired price
+  - If sellers exist at/below your bid price → immediate execution
+  - If no sellers at your price → your bid waits on the order book
+  - Higher bids are more likely to execute quickly
+
+- To SELL: Place an ASK order at your desired price
+  - If buyers exist at/above your ask price → immediate execution
+  - If no buyers at your price → your ask waits on the order book
+  - Lower asks are more likely to execute quickly
+
+TRADING PRINCIPLES:
+- "Buy low, sell high" means buying below recent average prices when possible
+- Risk management: avoid spending your entire balance on one trade
+- Learn from history: if recent trades lost money, consider what went wrong
+- Liquidity: sometimes waiting for better prices is smarter than forcing trades
+- Analyze other traders' activity patterns and draw your own conclusions
+"""
+
+    @staticmethod
+    def format_market_context(lob: Dict, time: float, trader_state: Dict) -> str:
+        """Format market data consistently across all agents"""
+        best_bid = lob['bids']['best'] if lob['bids']['n'] > 0 else None
+        best_ask = lob['asks']['best'] if lob['asks']['n'] > 0 else None
+        bid_ask_spread = (best_ask - best_bid) if (best_bid and best_ask) else None
+
+        recent_prices = trader_state.get('recent_prices', [])
+        avg_price = sum(recent_prices) / len(recent_prices) if recent_prices else None
+        avg_price_str = f"${avg_price:.1f}" if avg_price else "N/A"
+
+        return f"""MARKET DATA:
+Time: {time:.1f}
+Best Bid: {best_bid}
+Best Ask: {best_ask}
+Spread: {bid_ask_spread}
+Recent prices: {recent_prices}
+Average recent price: {avg_price_str}
+
+MY CURRENT STATE:
+Balance: ${trader_state.get('balance', 0)}
+Current job: {trader_state.get('job', 'Unknown')}
+Inventory: {trader_state.get('inventory', 0)} units
+Last purchase price: ${trader_state.get('last_purchase_price', 'None')}
+Number of completed trades: {trader_state.get('n_trades', 0)}
+"""
+
+
+class BeliefGraphScaffolding:
+    """Belief graph integration prompts - JSON vs Natural Language"""
+
+    @staticmethod
+    def json_format() -> str:
+        """JSON belief graph scaffolding"""
+        return """
+BELIEF GRAPH INSIGHTS (JSON Format):
+The belief graph tracks your understanding of market dynamics and other agents' strategies.
+
+Current belief graph state:
+{belief_graph_json}
+
+Key elements:
+- "aggressiveness_scores": How aggressive each agent is in their trading (0-1 scale)
+- "strategy_beliefs": What strategies you believe other agents are following
+- "market_sentiment": Overall market direction and momentum
+- "risk_assessment": Current market risk level
+- "confidence_scores": How confident you are in your beliefs about each agent
+
+Use this structured data to inform your trading decisions.
+"""
+
+    @staticmethod
+    def natural_language_format() -> str:
+        """Natural language belief graph scaffolding"""
+        return """
+BELIEF GRAPH INSIGHTS (Natural Language):
+The belief graph represents your understanding of market dynamics and other agents' strategies.
+
+Current market beliefs:
+{belief_graph_narrative}
+
+This narrative describes:
+- How aggressive or passive other traders are behaving
+- What strategies you believe they are following
+- Overall market sentiment and direction
+- Your assessment of current market risks
+- How confident you are in your understanding of each agent
+
+Use these insights to inform your trading decisions.
+"""
+
+
+class ChainOfThoughtPrompts:
+    """Chain-of-thought reasoning scaffolding"""
+
+    @staticmethod
+    def cot_reasoning_prefix() -> str:
+        """Prefix for CoT-enabled agents"""
+        return """
+REASONING PROCESS:
+Before making your decision, think through:
+1. What is the current market situation?
+2. What are other traders doing and why?
+3. What does my belief graph tell me?
+4. What are the risks and opportunities?
+5. What action aligns with my strategy?
+
+Provide your reasoning step-by-step, then state your decision.
+"""
+
+    @staticmethod
+    def no_cot_suffix() -> str:
+        """Instructions for non-CoT agents"""
+        return """
+Respond ONLY with your decision. No explanation needed.
+"""
+
+
+class GraphQualityVariants:
+    """Different graph quality scenarios"""
+
+    @staticmethod
+    def perfect_graph_context() -> str:
+        """Perfect graph with complete information"""
+        return """
+GRAPH QUALITY: PERFECT
+You have complete and accurate information about all market participants and their strategies.
+All belief graph data is verified and highly reliable.
+"""
+
+    @staticmethod
+    def basic_graph_context() -> str:
+        """Basic graph with partial information"""
+        return """
+GRAPH QUALITY: BASIC
+You have limited information about market participants.
+Belief graph data is based on observations and may contain uncertainties.
+"""
+
+    @staticmethod
+    def no_graph_context() -> str:
+        """No belief graph - baseline LLM"""
+        return """
+GRAPH QUALITY: NONE
+You do not have access to belief graph insights.
+Make decisions based solely on observable market data.
+"""
+
+
+class HypotheticalMindPrompts:
+    """Hypothetical-Minds specific prompts"""
+
+    @staticmethod
+    def hm_system_message(agent_id: str) -> str:
+        """System message for HM agents"""
+        return f"""
+You are Agent {agent_id} in the Bristol Stock Exchange (BSE) trading simulation.
+This is a multi-agent financial trading environment where you compete with other traders
+to maximize profit through strategic order placement.
+
+Your goal is to maximize trading profit over time.
+
+You use Hypothetical-Minds reasoning:
+- Generate hypotheses about opponent strategies
+- Evaluate hypotheses using Rescorla-Wagner learning
+- Update beliefs based on prediction accuracy
+- Adapt your strategy to exploit opponent weaknesses
+
+Key strategic considerations:
+- Track competitor trading patterns and adapt accordingly
+- Balance aggressive vs conservative pricing strategies
+- Consider market momentum and liquidity conditions
+- Model opponent strategies to predict their future actions
+- Use hypothesis-driven reasoning to improve decision making
+"""
+
+    @staticmethod
+    def hypothesis_generation_prompt(market_context: str, interaction_history: List) -> str:
+        """Prompt for generating opponent hypotheses"""
+        return f"""
+Based on the market context and interaction history, generate 3 hypotheses about opponent strategies.
+
+{market_context}
+
+Recent interactions:
+{interaction_history}
+
+For each hypothesis, provide:
+1. A description of the opponent's likely strategy
+2. Predicted behavior patterns
+3. How you would exploit this strategy
+
+Format: Return JSON with 3 hypotheses.
+"""
+
+
+class AdaptiveAttributePrompts:
+    """Prompts for LLM-designed attributes (Variance 3)"""
+
+    @staticmethod
+    def design_attributes_prompt(market_context: Dict[str, Any]) -> str:
+        """Prompt for agent to design its own attributes"""
+        return f"""
+You are a trading agent designing your own trading personality for this market.
+
+CURRENT MARKET CONDITIONS:
+- Market volatility: {market_context.get('volatility', 'Unknown')}
+- Recent price trend: {market_context.get('trend', 'Unknown')}
+- Competition level: {market_context.get('competition', 'Unknown')}
+- Available liquidity: {market_context.get('liquidity', 'Unknown')}
+
+DESIGN YOUR ATTRIBUTES (0.0 to 1.0 scale):
+Design the following trading attributes that define your personality:
+
+1. Aggressiveness (0=very passive, 1=very aggressive)
+2. Patience (0=impatient/frequent trading, 1=very patient)
+3. Risk Tolerance (0=risk-averse, 1=risk-seeking)
+4. Momentum Following (0=contrarian, 1=trend follower)
+5. Mean Reversion Belief (0=no belief, 1=strong belief)
+6. Adaptability (0=rigid strategy, 1=highly adaptive)
+
+Respond with ONLY a JSON object:
+{{
+  "aggressiveness": 0.X,
+  "patience": 0.X,
+  "risk_tolerance": 0.X,
+  "momentum_following": 0.X,
+  "mean_reversion": 0.X,
+  "adaptability": 0.X,
+  "reasoning": "Brief explanation of your design choices"
+}}
+"""
+
+    @staticmethod
+    def adapt_attributes_prompt(
+        current_attributes: Dict[str, float],
+        performance_metrics: Dict[str, Any],
+        market_context: Dict[str, Any]
+    ) -> str:
+        """Prompt for adapting attributes based on performance"""
+        attr_display = "\n".join([
+            f"- {attr.replace('_', ' ').title()}: {value:.2f}"
+            for attr, value in current_attributes.items()
+        ])
+
+        return f"""
+Your current trading attributes aren't working well. Adapt your personality.
+
+CURRENT ATTRIBUTES:
+{attr_display}
+
+PERFORMANCE METRICS:
+- Current profit: ${performance_metrics.get('profit', 0)}
+- Win rate: {performance_metrics.get('win_rate', 0):.1%}
+- Number of trades: {performance_metrics.get('trade_count', 0)}
+
+MARKET CONDITIONS:
+- Volatility: {market_context.get('volatility', 'Unknown')}
+- Trend: {market_context.get('trend', 'Unknown')}
+- Competition: {market_context.get('competition', 'Unknown')}
+
+ANALYZE what went wrong and REDESIGN your attributes.
+
+Respond with ONLY a JSON object with your new attribute values:
+{{
+  "aggressiveness": 0.X,
+  "patience": 0.X,
+  "risk_tolerance": 0.X,
+  "momentum_following": 0.X,
+  "mean_reversion": 0.X,
+  "adaptability": 0.X,
+  "reasoning": "Brief explanation of your changes"
+}}
+"""
+
+    @staticmethod
+    def infer_belief_traits_prompt(
+        agent_id: str,
+        event,
+        agent_history: Dict[str, Any],
+        market_state: Dict[str, Any],
+        current_beliefs: Dict[str, float]
+    ) -> str:
+        """Prompt for inferring belief traits about another agent from observed behavior - EMERGENT TRAITS VERSION"""
+
+        # Format event details
+        event_type = event.event_type.value
+        event_price = event.price if event.price else 'N/A'
+        event_qty = event.quantity if event.quantity else 1
+
+        # Format agent history
+        total_trades = agent_history.get('total_trades', 0)
+        last_bid = agent_history.get('last_bid_price', 'None')
+        last_ask = agent_history.get('last_ask_price', 'None')
+        last_trade = agent_history.get('last_trade_price', 'None')
+        recent_events = agent_history.get('recent_events', [])
+
+        recent_events_str = "\n".join([
+            f"  - {e['event_type']} at price {e['price']} (qty: {e['quantity']})"
+            for e in recent_events[-5:]
+        ]) if recent_events else "  No recent events"
+
+        # Format market state
+        best_bid = market_state.get('current_best_bid', 'N/A')
+        best_ask = market_state.get('current_best_ask', 'N/A')
+        last_mkt_trade = market_state.get('last_trade_price', 'N/A')
+        spread = market_state.get('spread_width', 'N/A')
+
+        # Format current beliefs - show existing trait names
+        if current_beliefs:
+            belief_display = "\n".join([
+                f"- {trait}: {value:.2f}"
+                for trait, value in current_beliefs.items() if trait not in ['confidence', 'reasoning']
+            ])
+        else:
+            belief_display = "No traits identified yet."
+
+        return f"""
+You are observing another trader's behavior to infer their personality through emergent trait discovery.
+
+CURRENT EVENT:
+Agent {agent_id} just performed: {event_type} at price {event_price} (quantity: {event_qty})
+
+AGENT'S TRADING HISTORY:
+- Total trades completed: {total_trades}
+- Last bid price: {last_bid}
+- Last ask price: {last_ask}
+- Last trade price: {last_trade}
+- Recent activity:
+{recent_events_str}
+
+CURRENT MARKET STATE:
+- Best bid: {best_bid}
+- Best ask: {best_ask}
+- Last market trade price: {last_mkt_trade}
+- Bid-ask spread: {spread}
+
+EXISTING TRAITS YOU'VE IDENTIFIED:
+{belief_display}
+
+TASK:
+Based on what you observe, define 3-7 personality traits that capture this trader's behavior.
+
+TRAIT GENERATION RULES:
+1. Create trait names that describe observable behaviors
+2. Each trait is scored 0.0-1.0
+3. You can update existing traits or create new ones
+4. Trait names should be descriptive (e.g., "bid_aggression", "spread_sensitivity", "cancel_frequency", "price_anchoring", "volume_consistency")
+5. Only include traits you can actually infer from observations
+
+Examples of emergent traits:
+- bid_price_aggression: how close their bids are to the ask
+- order_persistence: how long they keep orders active
+- price_volatility_tolerance: willingness to trade during price swings
+- spread_crossing_tendency: frequency of crossing the spread
+- timing_consistency: regularity of their trading intervals
+- market_following_behavior: correlation with recent market movements
+
+Update existing traits or create new ones based on this observation.
+
+Respond with ONLY a JSON object with YOUR CHOSEN TRAITS (3-7 traits):
+{{
+  "trait_name_1": 0.X,
+  "trait_name_2": 0.X,
+  "trait_name_3": 0.X,
+  "confidence": 0.X,
+  "reasoning": "Brief explanation of what patterns you observed and which traits you identified"
+}}
+"""
+
+
+class TradingActionPrompts:
+    """Final action decision prompts"""
+
+    @staticmethod
+    def buy_decision_prompt(
+        market_context: str,
+        belief_insights: str,
+        cot_enabled: bool = False
+    ) -> str:
+        """Prompt for BUY decisions"""
+        cot_prefix = ChainOfThoughtPrompts.cot_reasoning_prefix() if cot_enabled else ""
+        cot_suffix = "" if cot_enabled else ChainOfThoughtPrompts.no_cot_suffix()
+
+        return f"""
+You are a proprietary trader looking to BUY a unit.
+
+{market_context}
+
+{BasePrompts.MARKET_FUNDAMENTALS}
+
+{belief_insights}
+
+CURRENT SITUATION: You currently have NO INVENTORY and are looking to BUY a unit.
+
+YOUR GOAL: Make a profitable trade. End with MORE money than you started with.
+
+{cot_prefix}
+
+Respond with ONLY:
+"BUY [exact_price]" - to place a bid at that price
+"WAIT" - to wait for better conditions
+
+{cot_suffix}
+"""
+
+    @staticmethod
+    def sell_decision_prompt(
+        market_context: str,
+        belief_insights: str,
+        purchase_price: float,
+        cot_enabled: bool = False
+    ) -> str:
+        """Prompt for SELL decisions"""
+        cot_prefix = ChainOfThoughtPrompts.cot_reasoning_prefix() if cot_enabled else ""
+        cot_suffix = "" if cot_enabled else ChainOfThoughtPrompts.no_cot_suffix()
+
+        return f"""
+You are a proprietary trader looking to SELL a unit.
+
+{market_context}
+
+{BasePrompts.MARKET_FUNDAMENTALS}
+
+{belief_insights}
+
+CURRENT SITUATION: You are holding 1 unit that you bought for ${purchase_price}. You need to SELL it.
+
+PROFIT/LOSS ANALYSIS:
+- You bought at: ${purchase_price}
+- Break-even price: ${purchase_price}
+- To profit: sell above ${purchase_price}
+
+YOUR GOAL: Make a profitable trade. Sell for more than you paid.
+
+{cot_prefix}
+
+Respond with ONLY:
+"SELL [exact_price]" - to place an ask at that price
+"WAIT" - to wait for better conditions
+
+{cot_suffix}
+"""
+
+
+class PromptBuilder:
+    """Build complete prompts by combining scaffolding components"""
+
+    @staticmethod
+    def build_trading_prompt(
+        agent_config: Dict[str, Any],
+        market_context: str,
+        trader_state: Dict[str, Any],
+        belief_graph_data: Optional[Any] = None
+    ) -> str:
+        """
+        Build a complete trading prompt based on agent configuration
+
+        Args:
+            agent_config: {
+                'use_belief_graph': bool,
+                'belief_format': 'json' | 'natural_language',
+                'use_cot': bool,
+                'graph_quality': 'perfect' | 'basic' | None,
+                'job': 'Buy' | 'Sell'
+            }
+            market_context: Formatted market data string
+            trader_state: Current trader state
+            belief_graph_data: Belief graph insights (JSON or narrative)
+        """
+
+        # Build belief insights section
+        if agent_config.get('use_belief_graph', False):
+            if agent_config.get('belief_format') == 'json':
+                belief_insights = BeliefGraphScaffolding.json_format().format(
+                    belief_graph_json=belief_graph_data or "{}"
+                )
+            else:
+                belief_insights = BeliefGraphScaffolding.natural_language_format().format(
+                    belief_graph_narrative=belief_graph_data or "No beliefs available."
+                )
+
+            # Add graph quality context
+            if agent_config.get('graph_quality') == 'perfect':
+                belief_insights += "\n" + GraphQualityVariants.perfect_graph_context()
+            elif agent_config.get('graph_quality') == 'basic':
+                belief_insights += "\n" + GraphQualityVariants.basic_graph_context()
+        else:
+            belief_insights = GraphQualityVariants.no_graph_context()
+
+        # Select action prompt based on job
+        if agent_config.get('job') == 'Buy':
+            return TradingActionPrompts.buy_decision_prompt(
+                market_context,
+                belief_insights,
+                agent_config.get('use_cot', False)
+            )
+        else:
+            return TradingActionPrompts.sell_decision_prompt(
+                market_context,
+                belief_insights,
+                trader_state.get('last_purchase_price', 0),
+                agent_config.get('use_cot', False)
+            )
+
+
+class PromptParser:
+    """Parse LLM responses consistently across all agents"""
+
+    @staticmethod
+    def parse_trading_action(response: str, expected_action: str) -> Dict[str, Any]:
+        """
+        Parse trading action from LLM response
+
+        Args:
+            response: LLM response text
+            expected_action: 'BUY' or 'SELL'
+
+        Returns:
+            {'action': str, 'price': Optional[int], 'reasoning': str}
+        """
+        import re
+
+        response_upper = response.upper().strip()
+
+        # Look for explicit action with price
+        if expected_action == 'BUY':
+            buy_match = re.search(r'BUY\s+(\d+)', response_upper)
+            if buy_match:
+                price = int(buy_match.group(1))
+                price = max(1, min(500, price))
+                return {
+                    'action': 'BUY',
+                    'price': price,
+                    'reasoning': response
+                }
+        elif expected_action == 'SELL':
+            sell_match = re.search(r'SELL\s+(\d+)', response_upper)
+            if sell_match:
+                price = int(sell_match.group(1))
+                price = max(1, min(500, price))
+                return {
+                    'action': 'SELL',
+                    'price': price,
+                    'reasoning': response
+                }
+
+        # Check for WAIT
+        if 'WAIT' in response_upper:
+            return {
+                'action': 'WAIT',
+                'price': None,
+                'reasoning': response
+            }
+
+        # No valid action found
+        return {
+            'action': 'WAIT',
+            'price': None,
+            'reasoning': f"Could not parse response: {response}"
+        }
+
+    @staticmethod
+    def parse_attribute_design(response: str) -> Dict[str, float]:
+        """Parse LLM-designed attributes from response - SUPPORTS EMERGENT TRAITS"""
+        import json
+        import re
+
+        # Try to extract JSON object
+        json_match = re.search(r'\{[^}]+\}', response, re.DOTALL)
+        if json_match:
+            try:
+                data = json.loads(json_match.group(0))
+
+                # Extract all numeric traits (0.0-1.0 scale)
+                traits = {}
+                for key, value in data.items():
+                    if key in ['reasoning', 'confidence']:
+                        # Special keys preserved as-is
+                        if key == 'confidence':
+                            traits[key] = float(value) if isinstance(value, (int, float)) else 0.1
+                        else:
+                            traits[key] = value
+                    else:
+                        # All other keys treated as trait names
+                        try:
+                            trait_value = float(value)
+                            trait_value = max(0.0, min(1.0, trait_value))  # Clamp to [0, 1]
+                            traits[key] = trait_value
+                        except (ValueError, TypeError):
+                            pass
+
+                # Ensure we have reasoning and confidence
+                if 'reasoning' not in traits:
+                    traits['reasoning'] = 'No reasoning provided'
+                if 'confidence' not in traits:
+                    traits['confidence'] = 0.1
+
+                return traits
+
+            except (json.JSONDecodeError, ValueError, KeyError):
+                pass
+
+        # Return minimal defaults if parsing fails
+        return {
+            'confidence': 0.1,
+            'reasoning': 'Failed to parse - no traits identified'
+        }

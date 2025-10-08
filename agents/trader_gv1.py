@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""
+TraderGV1: Graph Variance 1 - Discrete Sets
+Configurable: use_cot (True/False), belief_format ('json' or 'nl')
+
+Uses discrete belief sets with set elimination logic.
+"""
+
+import os
+import sys
+from typing import Dict, Any
+import json
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from agents.base_llm_trader import BaseLLMTrader
+from unified_prompts import PromptBuilder, BasePrompts
+from belief_graph import GraphVar1
+from BSE import Order
+
+
+class TraderGV1(BaseLLMTrader):
+    """Discrete sets belief graph trader - configurable CoT and format"""
+
+    def __init__(self, ttype: str, tid: str, balance: float, params: Dict[str, Any], time: float):
+        super().__init__(ttype, tid, balance, params, time)
+
+        self.use_cot = params.get('use_cot', True)
+        self.belief_format = params.get('belief_format', 'json')
+
+        self.belief_graph = GraphVar1(asset_id="BSE_ASSET")
+        self.belief_graph.add_agent(tid)
+
+    def get_belief_data(self) -> str:
+        """Get belief graph data in configured format"""
+        if self.belief_format == 'json':
+            beliefs = {
+                'tracked_agents': [],
+                'belief_sets': {},
+                'market_state': 'active'
+            }
+
+            for agent_id in self.belief_graph.agents:
+                if agent_id != self.tid:
+                    beliefs['tracked_agents'].append(agent_id)
+
+                    # Get discrete belief sets for this agent
+                    agent_beliefs = {}
+                    for edge_id, edge in self.belief_graph.edges.items():
+                        if edge.target_node == agent_id:
+                            if "possible_valuations" in edge.value:
+                                agent_beliefs['possible_valuations'] = list(edge.value["possible_valuations"])[:10]
+                            elif "possible_directions" in edge.value:
+                                agent_beliefs['possible_directions'] = list(edge.value["possible_directions"])
+                            elif "possible_desperation_levels" in edge.value:
+                                agent_beliefs['possible_desperation'] = list(edge.value["possible_desperation_levels"])
+
+                    beliefs['belief_sets'][str(agent_id)] = agent_beliefs
+
+            return json.dumps(beliefs, indent=2)
+        else:
+            narrative_parts = []
+            for agent_id in self.belief_graph.agents:
+                if agent_id != self.tid:
+                    narrative_parts.append(f"Agent {agent_id}:")
+
+                    for edge in self.belief_graph.edges.values():
+                        if edge.target_node == agent_id and edge.value:
+                            if "possible_valuations" in edge.value:
+                                vals = edge.value["possible_valuations"]
+                                narrative_parts.append(f"  Possible valuations: {list(vals)[:5]}..." if len(vals) > 5 else f"  Possible valuations: {list(vals)}")
+                            elif "possible_directions" in edge.value:
+                                dirs = edge.value["possible_directions"]
+                                narrative_parts.append(f"  Possible market directions: {list(dirs)}")
+                            elif "possible_desperation_levels" in edge.value:
+                                desp = edge.value["possible_desperation_levels"]
+                                narrative_parts.append(f"  Possible desperation levels: {list(desp)}")
+
+            return "\n".join(narrative_parts) if narrative_parts else "No agents observed yet."
+
+    def getorder(self, time, countdown, lob, p_eq=None, q_eq=None, demand_curve=None, supply_curve=None):
+        if len(lob['bids']['lob']) <= 0 and len(lob['asks']['lob']) <= 0:
+            return None
+
+        recent_prices = self.extract_recent_prices(lob, n_prices=5)
+        trader_state = self.build_trader_state()
+        trader_state['recent_prices'] = recent_prices
+
+        market_context = BasePrompts.format_market_context(lob, time, trader_state)
+        belief_data = self.get_belief_data()
+
+        agent_config = {
+            'use_belief_graph': True,
+            'belief_format': self.belief_format,
+            'use_cot': self.use_cot,
+            'graph_quality': 'basic',
+            'job': self.job
+        }
+
+        prompt = PromptBuilder.build_trading_prompt(agent_config, market_context, trader_state, belief_graph_data=belief_data)
+        decision = self.get_llm_decision(prompt)
+
+        if decision['action'] == 'WAIT':
+            return None
+
+        return Order(self.tid, 'Bid' if self.job == 'Buy' else 'Ask', decision['price'], 1, time, lob['QID'])
+
+    def respond(self, time, lob, trade, verbose):
+        """Update belief graph when market events occur"""
+        events_processed = self.process_and_log_market_events(time, lob, trade)
+        self.log_belief_graph_update(time, events_processed)

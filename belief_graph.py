@@ -21,9 +21,10 @@ import math
 import random
 import logging
 
-# Set up loggers for GraphVar1 and GraphVar2
+# Set up loggers for GraphVar1, GraphVar2, GraphVar3
 gv1_logger = logging.getLogger('graphvar1_traders')
 gv2_logger = logging.getLogger('graphvar2_traders')
+gv3_logger = logging.getLogger('graphvar3_traders')
 bg_logger = logging.getLogger('belief_graph_traders')
 
 
@@ -159,6 +160,21 @@ class AssetNode:
         }
 
 
+@dataclass
+class BeliefTraits:
+    """LLM-inferred traits representing beliefs about an agent's trading behavior"""
+    aggressiveness: float = 0.5  # 0.0 to 1.0
+    patience: float = 0.5
+    risk_tolerance: float = 0.5
+    momentum_following: float = 0.5
+    mean_reversion: float = 0.5
+    adaptability: float = 0.5
+    confidence: float = 0.1  # How confident we are in these beliefs
+
+    def to_dict(self) -> Dict[str, float]:
+        return asdict(self)
+
+
 class BeliefGraph:
     """
     Main belief graph class for managing agent beliefs and market state.
@@ -192,10 +208,15 @@ class BeliefGraph:
         if agent_id not in self.nodes:
             agent_node = AgentNode(agent_id=agent_id)
             self.nodes[agent_id] = agent_node
-            
+
             # Add initial beliefs about this agent
             self._add_initial_beliefs(agent_id)
-    
+
+    @property
+    def agents(self):
+        """Return list of agent IDs (excluding asset node)"""
+        return [node_id for node_id in self.nodes.keys() if node_id != self.asset_id]
+
     def _add_initial_beliefs(self, agent_id: str) -> None:
         """Add initial beliefs about a new agent"""
         # Add belief about agent's strategy (initially unknown)
@@ -685,13 +706,39 @@ class BeliefGraph:
             agent_node = self.nodes[agent_id]
             if hasattr(agent_node, 'strategy_type'):
                 strategy_type = agent_node.strategy_type
-        
+
+        # Extract from edges (works for all graph types)
+        if 'strategy' in beliefs and beliefs['strategy']:
+            strategy_edge = beliefs['strategy'][0]
+            strategy_type = strategy_edge.get('value', strategy_type)
+
+        # For valuation, also try direct edge value
+        if 'valuation' in beliefs and beliefs['valuation']:
+            val_edge = beliefs['valuation'][0]
+            val_value = val_edge.get('value')
+            if val_value is not None and not isinstance(val_value, dict):
+                valuation_estimate = val_value
+
         # Add simplified summary
         beliefs['valuation_estimate'] = valuation_estimate
         beliefs['strategy_type'] = strategy_type
-        
+
         return beliefs
-    
+
+    def get_aggressiveness(self, agent_id: str) -> float:
+        """Get aggressiveness score for an agent (helper method)"""
+        if agent_id not in self.nodes:
+            return 0.5  # Neutral default
+        agent_node = self.nodes[agent_id]
+        return agent_node.aggressiveness_score if hasattr(agent_node, 'aggressiveness_score') else 0.5
+
+    def get_beliefs(self, agent_id: str) -> str:
+        """Get beliefs about an agent (helper method)"""
+        beliefs = self.get_agent_beliefs(agent_id)
+        strategy = beliefs.get('strategy_type', 'unknown')
+        valuation = beliefs.get('valuation_estimate', 'unknown')
+        return f"strategy: {strategy}, valuation: {valuation}"
+
     def get_market_summary(self) -> Dict[str, Any]:
         """Get a summary of the current market state"""
         return {
@@ -746,10 +793,15 @@ class GraphVar1:
         if agent_id not in self.nodes:
             agent_node = AgentNode(agent_id=agent_id)
             self.nodes[agent_id] = agent_node
-            
+
             # Add initial beliefs about this agent
             self._add_initial_beliefs(agent_id)
-    
+
+    @property
+    def agents(self):
+        """Return list of agent IDs (excluding asset node)"""
+        return [node_id for node_id in self.nodes.keys() if node_id != self.asset_id]
+
     def _add_initial_beliefs(self, agent_id: str) -> None:
         """Add initial discrete belief sets about a new agent"""
         # Add discrete belief about agent's valuation possibilities
@@ -1669,13 +1721,39 @@ class GraphVar1:
             agent_node = self.nodes[agent_id]
             if hasattr(agent_node, 'strategy_type'):
                 strategy_type = agent_node.strategy_type
-        
+
+        # Extract from edges (works for all graph types)
+        if 'strategy' in beliefs and beliefs['strategy']:
+            strategy_edge = beliefs['strategy'][0]
+            strategy_type = strategy_edge.get('value', strategy_type)
+
+        # For valuation, also try direct edge value
+        if 'valuation' in beliefs and beliefs['valuation']:
+            val_edge = beliefs['valuation'][0]
+            val_value = val_edge.get('value')
+            if val_value is not None and not isinstance(val_value, dict):
+                valuation_estimate = val_value
+
         # Add simplified summary
         beliefs['valuation_estimate'] = valuation_estimate
         beliefs['strategy_type'] = strategy_type
-        
+
         return beliefs
-    
+
+    def get_aggressiveness(self, agent_id: str) -> float:
+        """Get aggressiveness score for an agent (helper method)"""
+        if agent_id not in self.nodes:
+            return 0.5  # Neutral default
+        agent_node = self.nodes[agent_id]
+        return agent_node.aggressiveness_score if hasattr(agent_node, 'aggressiveness_score') else 0.5
+
+    def get_beliefs(self, agent_id: str) -> str:
+        """Get beliefs about an agent (helper method)"""
+        beliefs = self.get_agent_beliefs(agent_id)
+        strategy = beliefs.get('strategy_type', 'unknown')
+        valuation = beliefs.get('valuation_estimate', 'unknown')
+        return f"strategy: {strategy}, valuation: {valuation}"
+
     def get_market_summary(self) -> Dict[str, Any]:
         """Get a summary of the current market state"""
         return {
@@ -1884,10 +1962,15 @@ class GraphVar2:
         if agent_id not in self.nodes:
             agent_node = AgentNode(agent_id=agent_id)
             self.nodes[agent_id] = agent_node
-            
+
             # Add initial beliefs about this agent
             self._add_initial_beliefs(agent_id)
-    
+
+    @property
+    def agents(self):
+        """Return list of agent IDs (excluding asset node)"""
+        return [node_id for node_id in self.nodes.keys() if node_id != self.asset_id]
+
     def _add_initial_beliefs(self, agent_id: str) -> None:
         """Add initial probability distributions about a new agent"""
         # Add probabilistic belief about agent's valuation  
@@ -2028,8 +2111,8 @@ class GraphVar2:
         agent_node.last_bid_price = event.price
         agent_node.last_activity = event.timestamp
         
-        # Update discrete beliefs using set elimination logic
-        self._update_discrete_beliefs_from_market_event(event.agent_id, event.price, "bid")
+        # Update valuation belief
+        self._update_valuation_belief(event.agent_id, event.price, "bid")
     
     def _update_beliefs_from_ask(self, event: MarketEvent) -> None:
         """Update beliefs based on an ask event"""
@@ -2946,13 +3029,39 @@ class GraphVar2:
             agent_node = self.nodes[agent_id]
             if hasattr(agent_node, 'strategy_type'):
                 strategy_type = agent_node.strategy_type
-        
+
+        # Extract from edges (works for all graph types)
+        if 'strategy' in beliefs and beliefs['strategy']:
+            strategy_edge = beliefs['strategy'][0]
+            strategy_type = strategy_edge.get('value', strategy_type)
+
+        # For valuation, also try direct edge value
+        if 'valuation' in beliefs and beliefs['valuation']:
+            val_edge = beliefs['valuation'][0]
+            val_value = val_edge.get('value')
+            if val_value is not None and not isinstance(val_value, dict):
+                valuation_estimate = val_value
+
         # Add simplified summary
         beliefs['valuation_estimate'] = valuation_estimate
         beliefs['strategy_type'] = strategy_type
-        
+
         return beliefs
-    
+
+    def get_aggressiveness(self, agent_id: str) -> float:
+        """Get aggressiveness score for an agent (helper method)"""
+        if agent_id not in self.nodes:
+            return 0.5  # Neutral default
+        agent_node = self.nodes[agent_id]
+        return agent_node.aggressiveness_score if hasattr(agent_node, 'aggressiveness_score') else 0.5
+
+    def get_beliefs(self, agent_id: str) -> str:
+        """Get beliefs about an agent (helper method)"""
+        beliefs = self.get_agent_beliefs(agent_id)
+        strategy = beliefs.get('strategy_type', 'unknown')
+        valuation = beliefs.get('valuation_estimate', 'unknown')
+        return f"strategy: {strategy}, valuation: {valuation}"
+
     def get_market_summary(self) -> Dict[str, Any]:
         """Get a summary of the current market state"""
         return {
@@ -3050,20 +3159,25 @@ class PerfectBeliefGraph:
         if agent_id not in self.nodes:
             agent_node = AgentNode(agent_id=agent_id)
             self.nodes[agent_id] = agent_node
-            
+
             # Add PERFECT beliefs by directly accessing trader object
             self._add_perfect_beliefs(agent_id)
-    
+
+    @property
+    def agents(self):
+        """Return list of agent IDs (excluding asset node)"""
+        return [node_id for node_id in self.nodes.keys() if node_id != self.asset_id]
+
     def _add_perfect_beliefs(self, agent_id: str) -> None:
         """
         Add ONLY the original 2 belief types with PERFECT VALUES instead of inferred ones.
-        
+
         ORIGINAL STRUCTURE MAINTAINED - only strategy and valuation beliefs exist.
         We just cheat by getting perfect values instead of inferring them from behavior.
         """
         trader = self.traders_dict.get(agent_id)
         if not trader:
-            raise ValueError(f"No trader found for agent_id: {agent_id}")
+            return
             
         # PERFECT STRATEGY - provide extremely detailed behavioral description from BSE.py documentation
         # Original only had: "unknown", "aggressive", "passive", "neutral"  
@@ -3556,13 +3670,39 @@ class PerfectBeliefGraph:
             agent_node = self.nodes[agent_id]
             if hasattr(agent_node, 'strategy_type'):
                 strategy_type = agent_node.strategy_type
-        
+
+        # Extract from edges (works for all graph types)
+        if 'strategy' in beliefs and beliefs['strategy']:
+            strategy_edge = beliefs['strategy'][0]
+            strategy_type = strategy_edge.get('value', strategy_type)
+
+        # For valuation, also try direct edge value
+        if 'valuation' in beliefs and beliefs['valuation']:
+            val_edge = beliefs['valuation'][0]
+            val_value = val_edge.get('value')
+            if val_value is not None and not isinstance(val_value, dict):
+                valuation_estimate = val_value
+
         # Add simplified summary
         beliefs['valuation_estimate'] = valuation_estimate
         beliefs['strategy_type'] = strategy_type
-        
+
         return beliefs
-    
+
+    def get_aggressiveness(self, agent_id: str) -> float:
+        """Get aggressiveness score for an agent (helper method)"""
+        if agent_id not in self.nodes:
+            return 0.5  # Neutral default
+        agent_node = self.nodes[agent_id]
+        return agent_node.aggressiveness_score if hasattr(agent_node, 'aggressiveness_score') else 0.5
+
+    def get_beliefs(self, agent_id: str) -> str:
+        """Get beliefs about an agent (helper method)"""
+        beliefs = self.get_agent_beliefs(agent_id)
+        strategy = beliefs.get('strategy_type', 'unknown')
+        valuation = beliefs.get('valuation_estimate', 'unknown')
+        return f"strategy: {strategy}, valuation: {valuation}"
+
     def get_market_summary(self) -> Dict[str, Any]:
         """Get a summary of the current market state"""
         return {
@@ -3573,3 +3713,360 @@ class PerfectBeliefGraph:
             'current_time': self.current_time
         }
 
+
+class GraphVar3:
+    """
+    Graph Variant 3: LLM-Inferred Belief Traits
+
+    This variant stores beliefs as LLM-inferred trait sets for each agent.
+    Instead of numeric scores or probability distributions, it maintains the same
+    trait structure that traders use for themselves (aggressiveness, patience, etc.)
+    but as beliefs about other traders, inferred by LLM from observed behavior.
+
+    Key idea: "I believe Agent X has aggressiveness=0.8, patience=0.3, risk_tolerance=0.7"
+    (inferred by LLM from market observations, not hardcoded rules)
+    """
+
+    def __init__(self, asset_id: str = "DEFAULT_ASSET", model=None, logger=None):
+        self.graph_id = str(uuid.uuid4())
+        self.asset_id = asset_id
+        self.nodes: Dict[str, AgentNode | AssetNode] = {}
+        self.edges: Dict[str, BeliefEdge] = {}
+        self.event_history: List[MarketEvent] = []
+        self.current_time = 0.0
+
+        # LLM model for trait inference
+        self.model = model
+        self.logger = logger or gv3_logger
+
+        # Store belief traits for each agent (flexible dict to support emergent traits)
+        self.belief_traits: Dict[str, Dict[str, float]] = {}
+
+        # Initialize the asset node
+        self.asset_node = AssetNode(asset_id=asset_id)
+        self.nodes[asset_id] = self.asset_node
+
+        # Belief update parameters
+        self.valuation_decay_rate = 0.95
+        self.confidence_boost = 0.1
+        self.max_confidence = 0.95
+
+    def add_agent(self, agent_id: str) -> None:
+        """Add a new agent with default belief traits"""
+        if agent_id not in self.nodes:
+            agent_node = AgentNode(agent_id=agent_id)
+            self.nodes[agent_id] = agent_node
+
+            # Initialize with minimal default traits (LLM will generate more)
+            self.belief_traits[agent_id] = {
+                'confidence': 0.1,
+                'reasoning': 'No observations yet'
+            }
+
+    @property
+    def agents(self):
+        """Return list of agent IDs (excluding asset node)"""
+        return [node_id for node_id in self.nodes.keys() if node_id != self.asset_id]
+
+    def update_beliefs(self, event: MarketEvent) -> None:
+        """Update belief attributes based on market event"""
+        self.current_time = event.timestamp
+        self.event_history.append(event)
+
+        if event.agent_id and event.agent_id not in self.nodes:
+            self.add_agent(event.agent_id)
+
+        # Update based on event type
+        if event.event_type == EventType.BID:
+            self._update_beliefs_from_bid(event)
+        elif event.event_type == EventType.ASK:
+            self._update_beliefs_from_ask(event)
+        elif event.event_type == EventType.TRADE:
+            self._update_beliefs_from_trade(event)
+        elif event.event_type == EventType.CANCEL:
+            self._update_beliefs_from_cancel(event)
+
+        self._update_asset_state()
+        self._decay_old_beliefs()
+
+    def _update_beliefs_from_bid(self, event: MarketEvent) -> None:
+        """Update belief traits from bid event (LLM-based inference)"""
+        if not event.agent_id or event.price is None:
+            return
+
+        agent_node = self.nodes[event.agent_id]
+        agent_node.last_bid_price = event.price
+        agent_node.last_activity = event.timestamp
+
+        # LLM-based trait inference
+        self._infer_belief_traits_from_event(event)
+
+    def _update_beliefs_from_ask(self, event: MarketEvent) -> None:
+        """Update belief traits from ask event (LLM-based inference)"""
+        if not event.agent_id or event.price is None:
+            return
+
+        agent_node = self.nodes[event.agent_id]
+        agent_node.last_ask_price = event.price
+        agent_node.last_activity = event.timestamp
+
+        # LLM-based trait inference
+        self._infer_belief_traits_from_event(event)
+
+    def _update_beliefs_from_trade(self, event: MarketEvent) -> None:
+        """Update belief traits from trade event (LLM-based inference)"""
+        if not event.agent_id or event.price is None:
+            return
+
+        agent_node = self.nodes[event.agent_id]
+        agent_node.last_trade_price = event.price
+        agent_node.total_trades += 1
+        agent_node.total_volume += event.quantity or 1
+        agent_node.last_activity = event.timestamp
+
+        # Update asset state
+        self.asset_node.last_trade_price = event.price
+        self.asset_node.volume_traded += event.quantity or 1
+
+        # LLM-based trait inference
+        self._infer_belief_traits_from_event(event)
+
+    def _update_beliefs_from_cancel(self, event: MarketEvent) -> None:
+        """Update belief traits from cancel event (LLM-based inference)"""
+        if not event.agent_id:
+            return
+
+        agent_node = self.nodes[event.agent_id]
+        agent_node.last_activity = event.timestamp
+
+        # LLM-based trait inference
+        self._infer_belief_traits_from_event(event)
+
+    def _update_asset_state(self) -> None:
+        """Update the asset node state"""
+        if (self.asset_node.current_best_bid is not None and
+            self.asset_node.current_best_ask is not None):
+            self.asset_node.spread_width = self.asset_node.current_best_ask - self.asset_node.current_best_bid
+
+    def _decay_old_beliefs(self) -> None:
+        """Decay confidence in old beliefs"""
+        current_time = self.current_time
+        for edge in self.edges.values():
+            time_diff = current_time - edge.timestamp
+            if time_diff > 100:
+                decay_factor = self.valuation_decay_rate ** (time_diff / 100)
+                edge.confidence *= decay_factor
+
+        # Decay belief trait confidence
+        for traits in self.belief_traits.values():
+            time_since_update = current_time - self.current_time  # TODO: track per-agent
+            if time_since_update > 100:
+                decay_factor = self.valuation_decay_rate ** (time_since_update / 100)
+                traits.confidence *= decay_factor
+
+    def _build_agent_history(self, agent_id: str) -> Dict[str, Any]:
+        """Build trading history for an agent"""
+        if agent_id not in self.nodes:
+            return {}
+
+        agent_node = self.nodes[agent_id]
+
+        # Extract recent events for this agent
+        agent_events = [e for e in self.event_history[-20:] if e.agent_id == agent_id]
+
+        return {
+            'total_trades': agent_node.total_trades,
+            'total_volume': agent_node.total_volume,
+            'last_bid_price': agent_node.last_bid_price,
+            'last_ask_price': agent_node.last_ask_price,
+            'last_trade_price': agent_node.last_trade_price,
+            'last_activity': agent_node.last_activity,
+            'recent_events': [
+                {
+                    'event_type': e.event_type.value,
+                    'price': e.price,
+                    'quantity': e.quantity,
+                    'timestamp': e.timestamp
+                } for e in agent_events
+            ]
+        }
+
+    def _build_market_state(self) -> Dict[str, Any]:
+        """Build current market state summary"""
+        return {
+            'current_best_bid': self.asset_node.current_best_bid,
+            'current_best_ask': self.asset_node.current_best_ask,
+            'last_trade_price': self.asset_node.last_trade_price,
+            'spread_width': self.asset_node.spread_width,
+            'volume_traded': self.asset_node.volume_traded,
+            'current_time': self.current_time,
+            'total_agents': len([n for n in self.nodes.values() if isinstance(n, AgentNode)])
+        }
+
+    def _infer_belief_traits_from_event(self, event: MarketEvent) -> None:
+        """Infer belief traits using LLM based on observed event"""
+        if not self.model or not event.agent_id:
+            return
+
+        # Build context
+        agent_history = self._build_agent_history(event.agent_id)
+        market_state = self._build_market_state()
+        current_beliefs = self.belief_traits[event.agent_id]
+
+        # Import here to avoid circular import
+        from unified_prompts import AdaptiveAttributePrompts, PromptParser
+
+        # Build prompt
+        prompt = AdaptiveAttributePrompts.infer_belief_traits_prompt(
+            event.agent_id,
+            event,
+            agent_history,
+            market_state,
+            current_beliefs
+        )
+
+        self.logger.info("=== BELIEF TRAIT INFERENCE PROMPT ===")
+        self.logger.info("="*80)
+        self.logger.info(prompt)
+        self.logger.info("="*80)
+
+        # Call LLM
+        response = self.model.generate_content(
+            prompt,
+            generation_config=self.model._generation_config
+        )
+
+        self.logger.info("=== BELIEF TRAIT INFERENCE RESPONSE ===")
+        self.logger.info(response.text.strip())
+        self.logger.info("="*80)
+
+        # Parse and update
+        new_traits = PromptParser.parse_attribute_design(response.text)
+        old_traits = self.belief_traits[event.agent_id].copy()
+
+        self.update_belief_traits(event.agent_id, new_traits)
+
+        self.logger.info(f"=== BELIEF TRAITS UPDATED FOR {event.agent_id} ===")
+        # Show all traits that changed (both old presets and new emergent ones)
+        all_keys = set(old_traits.keys()) | set(new_traits.keys())
+        for key in sorted(all_keys):
+            if key in ['reasoning']:  # Skip non-numeric fields
+                continue
+            old_val = old_traits.get(key, 0.5)
+            new_val = new_traits.get(key, old_val)
+            if isinstance(old_val, (int, float)) and isinstance(new_val, (int, float)):
+                change = f" ({new_val - old_val:+.2f})"
+                self.logger.info(f"{key.replace('_', ' ').title()}: {old_val:.2f} -> {new_val:.2f}{change}")
+        self.logger.info("="*80)
+
+    def query_action(self, agent_id: str, current_market_state: Dict[str, Any]) -> Dict[str, Any]:
+        """Query the belief graph for decision-making"""
+        # Update asset state
+        if 'best_bid' in current_market_state:
+            self.asset_node.current_best_bid = current_market_state['best_bid']
+        if 'best_ask' in current_market_state:
+            self.asset_node.current_best_ask = current_market_state['best_ask']
+        if 'last_trade' in current_market_state:
+            self.asset_node.last_trade_price = current_market_state['last_trade']
+
+        # Build response with belief traits
+        belief_data = {
+            'graph_id': self.graph_id,
+            'current_time': self.current_time,
+            'asset_state': self.asset_node.to_dict(),
+            'belief_traits': {},
+            'traditional_beliefs': []
+        }
+
+        # Add belief traits for all agents except self
+        for node_id in self.agents:
+            if node_id != agent_id:
+                belief_data['belief_traits'][node_id] = self.belief_traits[node_id]
+
+        # Add traditional beliefs for compatibility
+        for edge in self.edges.values():
+            belief_data['traditional_beliefs'].append(edge.to_dict())
+
+        return belief_data
+
+    def get_agent_beliefs(self, agent_id: str) -> Dict[str, Any]:
+        """Get all beliefs about a specific agent"""
+        beliefs = {
+            'attributes': self.belief_traits.get(agent_id, {'confidence': 0.1}),
+            'traditional': [],
+            'valuation_estimate': None,
+            'strategy_type': None
+        }
+
+        # Get traditional beliefs
+        for edge in self.edges.values():
+            if edge.target_node == agent_id:
+                beliefs['traditional'].append(edge.to_dict())
+                if edge.belief_type == "strategy":
+                    beliefs['strategy_type'] = edge.value
+                elif edge.belief_type == "valuation":
+                    beliefs['valuation_estimate'] = edge.value
+
+        return beliefs
+
+    def get_aggressiveness(self, agent_id: str) -> float:
+        """Get aggressiveness trait for an agent (searches for any aggression-related trait)"""
+        if agent_id not in self.belief_traits:
+            return 0.5
+        traits = self.belief_traits[agent_id]
+        # Look for common aggression-related trait names
+        for key in ['aggressiveness', 'aggression', 'bid_aggression', 'trading_aggression']:
+            if key in traits:
+                return traits[key]
+        return 0.5
+
+    def get_beliefs(self, agent_id: str) -> str:
+        """Get beliefs about an agent (helper method)"""
+        if agent_id in self.belief_traits:
+            traits = self.belief_traits[agent_id]
+            # Format all numeric traits
+            trait_strs = [f"{k}: {v:.2f}" for k, v in traits.items()
+                         if isinstance(v, (int, float)) and k not in ['confidence']]
+            return ", ".join(trait_strs[:5]) if trait_strs else "no traits identified"
+        return "unknown traits"
+
+    def get_market_summary(self) -> Dict[str, Any]:
+        """Get a summary of the current market state"""
+        return {
+            'asset_state': self.asset_node.to_dict(),
+            'active_agents': len([n for n in self.nodes.values() if isinstance(n, AgentNode)]),
+            'total_beliefs': len(self.edges),
+            'total_belief_trait_sets': len(self.belief_traits),
+            'recent_events': len(self.event_history),
+            'current_time': self.current_time
+        }
+
+    def to_json(self) -> str:
+        """Serialize the belief graph to JSON"""
+        graph_data = {
+            'graph_id': self.graph_id,
+            'asset_id': self.asset_id,
+            'current_time': self.current_time,
+            'nodes': {node_id: node.to_dict() for node_id, node in self.nodes.items()},
+            'edges': {edge_id: edge.to_dict() for edge_id, edge in self.edges.items()},
+            'belief_traits': {
+                agent_id: traits
+                for agent_id, traits in self.belief_traits.items()
+            },
+            'event_history': [event.to_dict() for event in self.event_history[-50:]]
+        }
+        return json.dumps(graph_data, indent=2)
+
+    def update_belief_traits(self, agent_id: str, traits_dict: Dict[str, float]) -> None:
+        """Update belief traits for an agent (supports any trait names from LLM)"""
+        if agent_id not in self.belief_traits:
+            self.belief_traits[agent_id] = {}
+
+        # Update all traits from dict (allows emergent trait names)
+        for key, value in traits_dict.items():
+            if key in ['reasoning']:  # Store reasoning as-is
+                self.belief_traits[agent_id][key] = value
+            elif isinstance(value, (int, float)):  # Clamp numeric traits to [0, 1]
+                self.belief_traits[agent_id][key] = max(0.0, min(1.0, value))
+
+        self.logger.info(f"[GV3] Updated belief traits for {agent_id}: {self.belief_traits[agent_id]}")

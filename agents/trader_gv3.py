@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""
+TraderGV3: Graph Variance 3 - LLM-Designed Attributes
+Configurable: use_cot (True/False), belief_format ('json' or 'nl')
+
+NO HARDCODED ATTRIBUTES. LLM designs them dynamically.
+"""
+
+import os
+import sys
+from typing import Dict, Any
+import json
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from agents.base_llm_trader import BaseLLMTrader
+from unified_prompts import PromptBuilder, BasePrompts, AdaptiveAttributePrompts, PromptParser
+from belief_graph import GraphVar3
+from BSE import Order
+
+
+class TraderGV3(BaseLLMTrader):
+    """LLM-designed attributes trader - configurable CoT and format"""
+
+    def __init__(self, ttype: str, tid: str, balance: float, params: Dict[str, Any], time: float):
+        super().__init__(ttype, tid, balance, params, time)
+
+        self.use_cot = params.get('use_cot', True)
+        self.belief_format = params.get('belief_format', 'json')
+
+        self.belief_graph = GraphVar3(asset_id="BSE_ASSET")
+        # Note: We don't add self to our own belief graph - it only tracks OTHER agents
+
+        self.attributes = None
+        self.attributes_initialized = False
+
+        self.adaptation_enabled = params.get('adaptation_enabled', True)
+        self.adaptation_interval = params.get('adaptation_interval', 10)
+        self.last_adaptation_check = 0
+
+    def initialize_attributes(self, market_context: Dict[str, Any] = None):
+        """LLM designs its own attributes dynamically"""
+        if self.attributes_initialized:
+            return
+
+        if not self.model:
+            self.attributes = {
+                'aggressiveness': 0.5,
+                'patience': 0.5,
+                'risk_tolerance': 0.5,
+                'momentum_following': 0.5,
+                'mean_reversion': 0.5,
+                'adaptability': 0.5
+            }
+            self.attributes_initialized = True
+            return
+
+        market_ctx = market_context or {
+            'volatility': 'unknown',
+            'trend': 'unknown',
+            'competition': 'unknown',
+            'liquidity': 'unknown'
+        }
+
+        prompt = AdaptiveAttributePrompts.design_attributes_prompt(market_ctx)
+
+        self.logger.info("=== ATTRIBUTE DESIGN PROMPT ===")
+        self.logger.info("="*80)
+        self.logger.info(prompt)
+        self.logger.info("="*80)
+
+        response = self.model.generate_content(
+            prompt,
+            generation_config=self.model._generation_config
+        )
+
+        self.logger.info("=== ATTRIBUTE DESIGN RESPONSE ===")
+        self.logger.info(response.text.strip())
+        self.logger.info("="*80)
+
+        self.attributes = PromptParser.parse_attribute_design(response.text)
+        self.attributes_initialized = True
+
+        self.logger.info(f"=== DESIGNED ATTRIBUTES ===")
+        self.logger.info(f"Aggressiveness: {self.attributes.get('aggressiveness', 'N/A')}")
+        self.logger.info(f"Patience: {self.attributes.get('patience', 'N/A')}")
+        self.logger.info(f"Risk Tolerance: {self.attributes.get('risk_tolerance', 'N/A')}")
+        self.logger.info(f"Momentum Following: {self.attributes.get('momentum_following', 'N/A')}")
+        self.logger.info(f"Mean Reversion: {self.attributes.get('mean_reversion', 'N/A')}")
+        self.logger.info(f"Adaptability: {self.attributes.get('adaptability', 'N/A')}")
+        self.logger.info(f"Reasoning: {self.attributes.get('reasoning', 'N/A')[:200]}")
+        self.logger.info("="*80)
+
+        # Note: We don't sync attributes to belief graph because our belief graph only tracks OTHER agents
+        # Our own attributes (self.attributes) represent our trading personality
+        # The belief graph tracks what we believe about competitor behavior
+
+    def check_and_adapt_attributes(self, market_context: Dict[str, Any] = None):
+        """Adapt attributes based on performance"""
+        if not self.adaptation_enabled:
+            return
+
+        if self.n_trades < self.last_adaptation_check + self.adaptation_interval:
+            return
+
+        if not self.model:
+            return
+
+        performance_metrics = {
+            'profit': self.total_profit,
+            'win_rate': 0.5,
+            'trade_count': self.n_trades
+        }
+
+        market_ctx = market_context or {
+            'volatility': 'unknown',
+            'trend': 'unknown',
+            'competition': 'unknown'
+        }
+
+        prompt = AdaptiveAttributePrompts.adapt_attributes_prompt(
+            self.attributes,
+            performance_metrics,
+            market_ctx
+        )
+
+        self.logger.info("=== ATTRIBUTE ADAPTATION PROMPT ===")
+        self.logger.info("="*80)
+        self.logger.info(prompt)
+        self.logger.info("="*80)
+
+        response = self.model.generate_content(
+            prompt,
+            generation_config=self.model._generation_config
+        )
+
+        self.logger.info("=== ATTRIBUTE ADAPTATION RESPONSE ===")
+        self.logger.info(response.text.strip())
+        self.logger.info("="*80)
+
+        new_attributes = PromptParser.parse_attribute_design(response.text)
+        old_attributes = self.attributes.copy()
+        self.attributes = new_attributes
+        self.last_adaptation_check = self.n_trades
+
+        self.logger.info(f"=== ATTRIBUTES ADAPTED (Trade #{self.n_trades}) ===")
+        self.logger.info(f"OLD -> NEW:")
+        for key in ['aggressiveness', 'patience', 'risk_tolerance', 'momentum_following', 'mean_reversion', 'adaptability']:
+            old_val = old_attributes.get(key, 'N/A')
+            new_val = new_attributes.get(key, 'N/A')
+            change = f" ({new_val - old_val:+.2f})" if isinstance(old_val, (int, float)) and isinstance(new_val, (int, float)) else ""
+            self.logger.info(f"{key.replace('_', ' ').title()}: {old_val} -> {new_val}{change}")
+        self.logger.info(f"Reasoning: {new_attributes.get('reasoning', 'N/A')[:200]}")
+        self.logger.info("="*80)
+
+        # Note: Adapted attributes affect our OWN trading decisions, not belief graph
+        # Belief graph tracks what we observe about OTHER agents
+
+    def get_belief_data(self) -> str:
+        """Get belief graph data in configured format"""
+        if self.belief_format == 'json':
+            beliefs = {
+                'my_attributes': self.attributes,
+                'competitor_belief_traits': {}
+            }
+            for agent_id in self.belief_graph.agents:
+                if agent_id != self.tid:
+                    agent_beliefs = self.belief_graph.get_agent_beliefs(agent_id)
+                    beliefs['competitor_belief_traits'][agent_id] = agent_beliefs.get('attributes', {})
+            return json.dumps(beliefs, indent=2)
+        else:
+            narrative_parts = [f"My trading attributes: {self.attributes}"]
+            for agent_id in self.belief_graph.agents:
+                if agent_id != self.tid:
+                    agent_beliefs = self.belief_graph.get_agent_beliefs(agent_id)
+                    belief_traits = agent_beliefs.get('attributes', {})
+                    agg = belief_traits.get('aggressiveness', 0.5)
+                    patience = belief_traits.get('patience', 0.5)
+                    risk_tol = belief_traits.get('risk_tolerance', 0.5)
+                    conf = belief_traits.get('confidence', 0.1)
+
+                    agg_desc = "very aggressive" if agg > 0.7 else "passive" if agg < 0.3 else "moderately aggressive"
+                    narrative_parts.append(
+                        f"Agent {agent_id} appears {agg_desc} (aggressiveness: {agg:.2f}, "
+                        f"patience: {patience:.2f}, risk_tolerance: {risk_tol:.2f}, confidence: {conf:.2f})"
+                    )
+            return "\n".join(narrative_parts) if narrative_parts else "No agents observed yet."
+
+    def getorder(self, time, countdown, lob, p_eq=None, q_eq=None, demand_curve=None, supply_curve=None):
+        if not self.attributes_initialized:
+            self.initialize_attributes()
+
+        self.check_and_adapt_attributes()
+
+        recent_prices = self.extract_recent_prices(lob, n_prices=5)
+        trader_state = self.build_trader_state()
+        trader_state['recent_prices'] = recent_prices
+
+        market_context = BasePrompts.format_market_context(lob, time, trader_state)
+        belief_data = self.get_belief_data()
+
+        agent_config = {
+            'use_belief_graph': True,
+            'belief_format': self.belief_format,
+            'use_cot': self.use_cot,
+            'graph_quality': 'basic',
+            'job': self.job
+        }
+
+        prompt = PromptBuilder.build_trading_prompt(agent_config, market_context, trader_state, belief_graph_data=belief_data)
+        decision = self.get_llm_decision(prompt)
+
+        if decision['action'] == 'WAIT':
+            return None
+
+        return Order(self.tid, 'Bid' if self.job == 'Buy' else 'Ask', decision['price'], 1, time, lob['QID'])
+
+    def respond(self, time, lob, trade, verbose):
+        """Update belief graph when market events occur"""
+        events_processed = self.process_and_log_market_events(time, lob, trade)
+        self.log_belief_graph_update(time, events_processed)

@@ -437,24 +437,40 @@ class Exchange(Orderbook):
 
     def publish_lob(self, time, lob_file, vrbs):
         """
-        Returns the public LOB data published by the exchange, 
+        Returns the public LOB data published by the exchange,
         i.e. the version of the LOB that's accessible to the traders.
         :param time: the current time.
-        :param lob_file: 
+        :param lob_file:
         :param vrbs: verbosity: if True, print a running commentary; if False, stay silent.
         :return: the public LOB data.
         """
         public_data = dict()
         public_data['time'] = time
+
+        # Build non-anonymous LOB with trader IDs: [[tid, price, qty], ...]
+        bids_with_tids = []
+        for price in sorted(self.bids.lob.keys(), reverse=True):
+            orderlist = self.bids.lob[price][1]
+            for order in orderlist:
+                # order = [time, qty, tid, qid]
+                bids_with_tids.append([order[2], price, order[1]])  # [tid, price, qty]
+
+        asks_with_tids = []
+        for price in sorted(self.asks.lob.keys()):
+            orderlist = self.asks.lob[price][1]
+            for order in orderlist:
+                # order = [time, qty, tid, qid]
+                asks_with_tids.append([order[2], price, order[1]])  # [tid, price, qty]
+
         public_data['bids'] = {'best': self.bids.best_price,
                                'worst': self.bids.worstprice,
                                'n': self.bids.n_orders,
-                               'lob': self.bids.lob_anon}
+                               'lob': bids_with_tids}
         public_data['asks'] = {'best': self.asks.best_price,
                                'worst': self.asks.worstprice,
                                'sess_hi': self.asks.session_extreme,
                                'n': self.asks.n_orders,
-                               'lob': self.asks.lob_anon}
+                               'lob': asks_with_tids}
         public_data['QID'] = self.quote_id
         public_data['tape'] = self.tape
 
@@ -9299,11 +9315,22 @@ def populate_market(trdrs_spec, traders, shuffle, vrbs):
         if parameters:
             final_params.update(parameters)
         
+        # Handle AgentFactory types
+        if class_name == 'AgentFactory':
+            from agents import AgentFactory
+            return AgentFactory.create_agent(
+                agent_type=robottype,
+                tid=name,
+                balance=balance,
+                params=final_params,
+                time=time0
+            )
+
         # Dynamically create trader using globals() to get the class
         trader_class = globals().get(class_name)
         if trader_class is None:
             sys.exit(f'FATAL: Trader class "{class_name}" not found for type "{robottype}"\n')
-        
+
         return trader_class(robottype, name, balance, final_params, time0)
 
     def shuffle_traders(ttype_char, n, trader_list):
@@ -9903,10 +9930,12 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
             print('trader=%s order=%s' % (tid, order))
 
         if order is not None:
-            if order.otype == 'Ask' and order.price < traders[tid].orders[0].price:
-                sys.exit('Bad ask')
-            if order.otype == 'Bid' and order.price > traders[tid].orders[0].price:
-                sys.exit('Bad bid')
+            # Only validate customer traders (buyers/sellers), not proprietary traders
+            if tid[0] != 'P' and len(traders[tid].orders) > 0:
+                if order.otype == 'Ask' and order.price < traders[tid].orders[0].price:
+                    sys.exit('Bad ask')
+                if order.otype == 'Bid' and order.price > traders[tid].orders[0].price:
+                    sys.exit('Bad bid')
             # send order to exchange
             traders[tid].n_quotes = 1
             trade = exchange.process_order(time, order, tape_dump, process_verbose)
@@ -10030,23 +10059,51 @@ AVAILABLE_TRADER_TYPES = {
     'PRZI': {'class': 'TraderPRZI', 'balance_type': 'standard', 'params': {}},
     'PRSH': {'class': 'TraderPRZI', 'balance_type': 'standard', 'params': {}},
     'PRDE': {'class': 'TraderPRZI', 'balance_type': 'standard', 'params': {}},
-    
-    # Proprietary traders (use $500 starting balance)
+
+    # Proprietary traders - Traditional (use $500 starting balance)
     'PT1': {'class': 'TraderPT1', 'balance_type': 'prop', 'params': {'bid_percent': 0.95, 'ask_delta': 2, 'n_past_trades': 5}},
     'PT2': {'class': 'TraderPT2', 'balance_type': 'prop', 'params': {'bid_percent': 0.99, 'ask_delta': 2, 'n_past_trades': 5}},
-    'LLM': {'class': 'TraderLLMProp', 'balance_type': 'prop', 'params': {}},
-    'BG': {'class': 'TraderBeliefGraph', 'balance_type': 'prop', 'params': {}},
-    'BGNO': {'class': 'TraderBeliefGraphWithoutCOT', 'balance_type': 'prop', 'params': {}},
-    'PGCO': {'class': 'TraderPerfectGraphWithCoT', 'balance_type': 'prop', 'params': {}},
-    'PGNO': {'class': 'TraderPerfectGraphWithoutCoT', 'balance_type': 'prop', 'params': {}},
-    'GV1': {'class': 'GraphVar1', 'balance_type': 'prop', 'params': {}},
-    'GV2': {'class': 'GraphVar2', 'balance_type': 'prop', 'params': {}},
+
+    # Proprietary traders - LLM-Based (all 25 variants from AgentFactory)
+    'LLM': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'BG_JSON_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'BG_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'BG_JSON_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'BG_NL_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'PG_JSON_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'PG_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'PG_JSON_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'PG_NL_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'GV1_JSON_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'GV1_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'GV1_JSON_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'GV1_NL_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'GV2_JSON_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'GV2_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'GV2_JSON_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'GV2_NL_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'GV3_JSON_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'GV3_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'GV3_JSON_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'GV3_NL_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'HM_JSON_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'HM_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'HM_JSON_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'HM_NL_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
 }
 
 # CONFIGURATION: Edit these to control which traders are included
 ACTIVE_BUYERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]
 ACTIVE_SELLERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]  # Usually same as buyers
-ACTIVE_PROPTRADERS = [('BG', 1), ('GV1', 1), ('GV2', 1)]  # Only BG, GV1, GV2 as requested
+ACTIVE_PROPTRADERS = [
+    ('LLM', 1),
+    ('BG_JSON_COT', 1), ('BG_NL_COT', 1), ('BG_JSON_NOCOT', 1), ('BG_NL_NOCOT', 1),
+    ('PG_JSON_COT', 1), ('PG_NL_COT', 1), ('PG_JSON_NOCOT', 1), ('PG_NL_NOCOT', 1),
+    ('GV1_JSON_COT', 1), ('GV1_NL_COT', 1), ('GV1_JSON_NOCOT', 1), ('GV1_NL_NOCOT', 1),
+    ('GV2_JSON_COT', 1), ('GV2_NL_COT', 1), ('GV2_JSON_NOCOT', 1), ('GV2_NL_NOCOT', 1),
+    ('GV3_JSON_COT', 1), ('GV3_NL_COT', 1), ('GV3_JSON_NOCOT', 1), ('GV3_NL_NOCOT', 1),
+    ('HM_JSON_COT', 1), ('HM_NL_COT', 1), ('HM_JSON_NOCOT', 1), ('HM_NL_NOCOT', 1),
+]  # All 25 LLM-based agent variants
 
 # Automatically generate lists of proprietary trader types for filtering
 PROP_TRADER_TYPES = [ttype for ttype, count in ACTIVE_PROPTRADERS]
