@@ -10,7 +10,7 @@ from typing import Dict, Any
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agents.base_llm_trader import BaseLLMTrader
-from unified_prompts import PromptBuilder, BasePrompts
+from .unified_prompts import PromptBuilder, BasePrompts
 from BSE import Order
 
 
@@ -46,7 +46,7 @@ class TraderLLM_Baseline(BaseLLMTrader):
             belief_graph_data=None
         )
 
-        decision = self.get_llm_decision(prompt)
+        decision = self.get_llm_decision(prompt, time)
 
         if decision['action'] == 'WAIT':
             return None

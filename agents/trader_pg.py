@@ -11,8 +11,8 @@ import json
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agents.base_llm_trader import BaseLLMTrader
-from unified_prompts import PromptBuilder, BasePrompts
-from belief_graph import BeliefGraph, PerfectBeliefGraph
+from .unified_prompts import PromptBuilder, BasePrompts
+from .belief_graph import BeliefGraph, PerfectBeliefGraph
 from BSE import Order
 
 
@@ -80,7 +80,7 @@ class TraderPG(BaseLLMTrader):
         }
 
         prompt = PromptBuilder.build_trading_prompt(agent_config, market_context, trader_state, belief_graph_data=belief_data)
-        decision = self.get_llm_decision(prompt)
+        decision = self.get_llm_decision(prompt, time)
 
         if decision['action'] == 'WAIT':
             return None

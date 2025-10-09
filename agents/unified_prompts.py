@@ -217,7 +217,26 @@ For each hypothesis, provide:
 2. Predicted behavior patterns
 3. How you would exploit this strategy
 
-Format: Return JSON with 3 hypotheses.
+Respond with ONLY a JSON object in this exact format:
+{{
+  "hypotheses": [
+    {{
+      "description": "Detailed description of opponent strategy",
+      "behavior_patterns": "Expected trading behavior",
+      "exploitation": "How to exploit this strategy"
+    }},
+    {{
+      "description": "Second hypothesis...",
+      "behavior_patterns": "...",
+      "exploitation": "..."
+    }},
+    {{
+      "description": "Third hypothesis...",
+      "behavior_patterns": "...",
+      "exploitation": "..."
+    }}
+  ]
+}}
 """
 
 
@@ -226,35 +245,39 @@ class AdaptiveAttributePrompts:
 
     @staticmethod
     def design_attributes_prompt(market_context: Dict[str, Any]) -> str:
-        """Prompt for agent to design its own attributes"""
-        return f"""
-You are a trading agent designing your own trading personality for this market.
-
+        """Prompt for agent to design its own attributes - EMERGENT TRAITS VERSION"""
+        market_conditions = ""
+        if market_context:
+            market_conditions = f"""
 CURRENT MARKET CONDITIONS:
-- Market volatility: {market_context.get('volatility', 'Unknown')}
-- Recent price trend: {market_context.get('trend', 'Unknown')}
-- Competition level: {market_context.get('competition', 'Unknown')}
-- Available liquidity: {market_context.get('liquidity', 'Unknown')}
+- Market volatility: {market_context['volatility']}
+- Recent price trend: {market_context['trend']}
+- Competition level: {market_context['competition']}
+- Available liquidity: {market_context['liquidity']}
+"""
 
-DESIGN YOUR ATTRIBUTES (0.0 to 1.0 scale):
-Design the following trading attributes that define your personality:
+        return f"""
+You are a trading agent designing your own trading personality through emergent attribute discovery.
+{market_conditions}
+TASK:
+Create 4-8 trading attributes that define your personality based on the market conditions above.
 
-1. Aggressiveness (0=very passive, 1=very aggressive)
-2. Patience (0=impatient/frequent trading, 1=very patient)
-3. Risk Tolerance (0=risk-averse, 1=risk-seeking)
-4. Momentum Following (0=contrarian, 1=trend follower)
-5. Mean Reversion Belief (0=no belief, 1=strong belief)
-6. Adaptability (0=rigid strategy, 1=highly adaptive)
+ATTRIBUTE DESIGN RULES:
+1. Create attribute names that describe behavioral dimensions you think are important for trading
+2. Each attribute is scored 0.0-1.0
+3. Attribute names should be descriptive and specific to trading behavior
+4. Consider what behaviors would help you succeed in the current market conditions
+5. Think about how you want to respond to different market situations
+6. Design attributes that capture nuanced trading personality traits
+7. Focus on behaviors that would distinguish you from other traders
 
-Respond with ONLY a JSON object:
+Respond with ONLY a JSON object with YOUR CHOSEN ATTRIBUTES (4-8 attributes):
 {{
-  "aggressiveness": 0.X,
-  "patience": 0.X,
-  "risk_tolerance": 0.X,
-  "momentum_following": 0.X,
-  "mean_reversion": 0.X,
-  "adaptability": 0.X,
-  "reasoning": "Brief explanation of your design choices"
+  "attribute_name_1": 0.X,
+  "attribute_name_2": 0.X,
+  "attribute_name_3": 0.X,
+  "attribute_name_4": 0.X,
+  "reasoning": "Brief explanation of what personality you're creating and why these attributes matter"
 }}
 """
 
@@ -264,39 +287,54 @@ Respond with ONLY a JSON object:
         performance_metrics: Dict[str, Any],
         market_context: Dict[str, Any]
     ) -> str:
-        """Prompt for adapting attributes based on performance"""
+        """Prompt for adapting attributes based on performance - EMERGENT TRAITS VERSION"""
         attr_display = "\n".join([
             f"- {attr.replace('_', ' ').title()}: {value:.2f}"
-            for attr, value in current_attributes.items()
+            for attr, value in current_attributes.items() if attr not in ['reasoning', 'confidence']
         ])
 
+        market_conditions = ""
+        if market_context:
+            market_conditions = f"""
+MARKET CONDITIONS:
+- Volatility: {market_context['volatility']}
+- Trend: {market_context['trend']}
+- Competition: {market_context['competition']}
+"""
+
         return f"""
-Your current trading attributes aren't working well. Adapt your personality.
+Your current trading attributes need adaptation based on performance feedback.
 
 CURRENT ATTRIBUTES:
 {attr_display}
 
 PERFORMANCE METRICS:
-- Current profit: ${performance_metrics.get('profit', 0)}
-- Win rate: {performance_metrics.get('win_rate', 0):.1%}
-- Number of trades: {performance_metrics.get('trade_count', 0)}
+- Current profit: ${performance_metrics['profit']}
+- Win rate: {performance_metrics['win_rate']:.1%}
+- Number of trades: {performance_metrics['trade_count']}
+{market_conditions}
+TASK:
+Analyze your performance and adapt your trading personality through emergent attribute modification.
 
-MARKET CONDITIONS:
-- Volatility: {market_context.get('volatility', 'Unknown')}
-- Trend: {market_context.get('trend', 'Unknown')}
-- Competition: {market_context.get('competition', 'Unknown')}
+ADAPTATION RULES:
+1. You can modify existing attribute values (0.0-1.0 scale)
+2. You can create NEW attributes if you identify missing behavioral dimensions
+3. You can remove attributes that aren't helping (by not including them in response)
+4. Consider what behavioral changes would improve your performance
+5. Base changes on concrete performance feedback
 
-ANALYZE what went wrong and REDESIGN your attributes.
+ANALYZE:
+- What behaviors led to losses or missed opportunities?
+- What market conditions did you misread?
+- What attributes need strengthening or weakening?
+- Are there new behavioral dimensions you need to add?
 
-Respond with ONLY a JSON object with your new attribute values:
+Respond with ONLY a JSON object with your ADAPTED ATTRIBUTES (include only the attributes you want to keep/modify/add):
 {{
-  "aggressiveness": 0.X,
-  "patience": 0.X,
-  "risk_tolerance": 0.X,
-  "momentum_following": 0.X,
-  "mean_reversion": 0.X,
-  "adaptability": 0.X,
-  "reasoning": "Brief explanation of your changes"
+  "attribute_name_1": 0.X,
+  "attribute_name_2": 0.X,
+  "attribute_name_3": 0.X,
+  "reasoning": "Brief explanation of what changes you made and why they should improve performance"
 }}
 """
 
@@ -372,16 +410,10 @@ TRAIT GENERATION RULES:
 1. Create trait names that describe observable behaviors
 2. Each trait is scored 0.0-1.0
 3. You can update existing traits or create new ones
-4. Trait names should be descriptive (e.g., "bid_aggression", "spread_sensitivity", "cancel_frequency", "price_anchoring", "volume_consistency")
+4. Trait names should be descriptive and specific to what you observe
 5. Only include traits you can actually infer from observations
-
-Examples of emergent traits:
-- bid_price_aggression: how close their bids are to the ask
-- order_persistence: how long they keep orders active
-- price_volatility_tolerance: willingness to trade during price swings
-- spread_crossing_tendency: frequency of crossing the spread
-- timing_consistency: regularity of their trading intervals
-- market_following_behavior: correlation with recent market movements
+6. Focus on patterns that distinguish this trader from others
+7. Name traits based on actual behavior, not theoretical constructs
 
 Update existing traits or create new ones based on this observation.
 
@@ -392,6 +424,184 @@ Respond with ONLY a JSON object with YOUR CHOSEN TRAITS (3-7 traits):
   "trait_name_3": 0.X,
   "confidence": 0.X,
   "reasoning": "Brief explanation of what patterns you observed and which traits you identified"
+}}
+"""
+
+    @staticmethod
+    def infer_discrete_beliefs_prompt(
+        agent_id: str,
+        event,
+        agent_history: Dict[str, Any],
+        market_state: Dict[str, Any],
+        current_beliefs: Dict[str, Any]
+    ) -> str:
+        """Prompt for inferring discrete belief sets (GraphVar1)"""
+
+        event_type = event.event_type.value
+        event_price = event.price if event.price else 'N/A'
+        event_qty = event.quantity if event.quantity else 1
+
+        total_trades = agent_history.get('total_trades', 0)
+        last_bid = agent_history.get('last_bid_price', 'None')
+        last_ask = agent_history.get('last_ask_price', 'None')
+        last_trade = agent_history.get('last_trade_price', 'None')
+        recent_events = agent_history.get('recent_events', [])
+
+        recent_events_str = "\n".join([
+            f"  - {e['event_type']} at price {e['price']} (qty: {e['quantity']})"
+            for e in recent_events[-5:]
+        ]) if recent_events else "  No recent events"
+
+        best_bid = market_state.get('current_best_bid', 'N/A')
+        best_ask = market_state.get('current_best_ask', 'N/A')
+        last_mkt_trade = market_state.get('last_trade_price', 'N/A')
+        spread = market_state.get('spread_width', 'N/A')
+
+        if current_beliefs:
+            belief_display = "\n".join([
+                f"- {key}: {value}"
+                for key, value in current_beliefs.items() if key not in ['confidence', 'reasoning']
+            ])
+        else:
+            belief_display = "No beliefs identified yet."
+
+        return f"""
+You are observing another trader's behavior to infer their possible states using discrete belief sets.
+
+CURRENT EVENT:
+Agent {agent_id} just performed: {event_type} at price {event_price} (quantity: {event_qty})
+
+AGENT'S TRADING HISTORY:
+- Total trades completed: {total_trades}
+- Last bid price: {last_bid}
+- Last ask price: {last_ask}
+- Last trade price: {last_trade}
+- Recent activity:
+{recent_events_str}
+
+CURRENT MARKET STATE:
+- Best bid: {best_bid}
+- Best ask: {best_ask}
+- Last market trade price: {last_mkt_trade}
+- Bid-ask spread: {spread}
+
+EXISTING BELIEFS (Discrete Sets):
+{belief_display}
+
+TASK:
+Based on what you observe, identify the POSSIBLE values for this agent's beliefs.
+Use discrete sets to represent uncertainty about their true state.
+
+For each belief category, list the possible values that are STILL PLAUSIBLE given this observation.
+
+Respond with ONLY a JSON object with discrete sets:
+{{
+  "valuation": {{
+    "possible_valuations": [85, 90, 95]
+  }},
+  "market_direction": {{
+    "possible_directions": ["up", "down", "sideways"]
+  }},
+  "desperation_level": {{
+    "possible_desperation": ["calm", "moderate", "desperate"]
+  }},
+  "cash_availability": {{
+    "possible_cash": ["low", "medium", "high"]
+  }},
+  "exit_strategy": {{
+    "possible_exits": ["hold_till_end", "sell_early", "opportunistic"]
+  }},
+  "confidence": 0.X,
+  "reasoning": "Brief explanation of which possibilities were eliminated and why"
+}}
+"""
+
+    @staticmethod
+    def infer_probabilistic_beliefs_prompt(
+        agent_id: str,
+        event,
+        agent_history: Dict[str, Any],
+        market_state: Dict[str, Any],
+        current_beliefs: Dict[str, Any]
+    ) -> str:
+        """Prompt for inferring probabilistic belief distributions (GraphVar2)"""
+
+        event_type = event.event_type.value
+        event_price = event.price if event.price else 'N/A'
+        event_qty = event.quantity if event.quantity else 1
+
+        total_trades = agent_history.get('total_trades', 0)
+        last_bid = agent_history.get('last_bid_price', 'None')
+        last_ask = agent_history.get('last_ask_price', 'None')
+        last_trade = agent_history.get('last_trade_price', 'None')
+        recent_events = agent_history.get('recent_events', [])
+
+        recent_events_str = "\n".join([
+            f"  - {e['event_type']} at price {e['price']} (qty: {e['quantity']})"
+            for e in recent_events[-5:]
+        ]) if recent_events else "  No recent events"
+
+        best_bid = market_state.get('current_best_bid', 'N/A')
+        best_ask = market_state.get('current_best_ask', 'N/A')
+        last_mkt_trade = market_state.get('last_trade_price', 'N/A')
+        spread = market_state.get('spread_width', 'N/A')
+
+        if current_beliefs:
+            belief_display = "\n".join([
+                f"- {key}: {value}"
+                for key, value in current_beliefs.items() if key not in ['confidence', 'reasoning']
+            ])
+        else:
+            belief_display = "No beliefs identified yet."
+
+        return f"""
+You are observing another trader's behavior to infer probability distributions over their possible states.
+
+CURRENT EVENT:
+Agent {agent_id} just performed: {event_type} at price {event_price} (quantity: {event_qty})
+
+AGENT'S TRADING HISTORY:
+- Total trades completed: {total_trades}
+- Last bid price: {last_bid}
+- Last ask price: {last_ask}
+- Last trade price: {last_trade}
+- Recent activity:
+{recent_events_str}
+
+CURRENT MARKET STATE:
+- Best bid: {best_bid}
+- Best ask: {best_ask}
+- Last market trade price: {last_mkt_trade}
+- Bid-ask spread: {spread}
+
+EXISTING BELIEFS (Probability Distributions):
+{belief_display}
+
+TASK:
+Based on what you observe, update the probability distributions for this agent's beliefs.
+Use Bayesian reasoning to assign probabilities to different possible states.
+
+For each belief category, provide a probability distribution (must sum to 1.0).
+
+Respond with ONLY a JSON object with probability distributions:
+{{
+  "valuation": {{
+    "valuation_distribution": {{"85": 0.4, "90": 0.3, "95": 0.3}}
+  }},
+  "market_direction": {{
+    "direction_distribution": {{"up": 0.3, "down": 0.4, "sideways": 0.3}}
+  }},
+  "desperation_level": {{
+    "desperation_distribution": {{"calm": 0.6, "moderate": 0.3, "desperate": 0.1}}
+  }},
+  "cash_availability": {{
+    "cash_distribution": {{"low": 0.5, "medium": 0.3, "high": 0.2}}
+  }},
+  "exit_strategy": {{
+    "exit_distribution": {{"hold_till_end": 0.4, "sell_early": 0.3, "opportunistic": 0.3}}
+  }},
+  "confidence": 0.X,
+  "reasoning": "Brief explanation of how you updated the probabilities based on this observation"
 }}
 """
 
@@ -588,48 +798,69 @@ class PromptParser:
         }
 
     @staticmethod
+    def _extract_json_from_response(response: str) -> str:
+        """Extract JSON object from response, handling markdown code fences and trailing commas"""
+        import re
+
+        # Strip markdown code fences if present
+        code_fence_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response, re.DOTALL)
+        if code_fence_match:
+            response = code_fence_match.group(1)
+
+        first_brace = response.find('{')
+        if first_brace == -1:
+            raise ValueError("No JSON object found in response")
+
+        brace_count = 0
+        start = first_brace
+
+        for i, char in enumerate(response[first_brace:], start=first_brace):
+            if char == '{':
+                brace_count += 1
+            elif char == '}':
+                brace_count -= 1
+                if brace_count == 0:
+                    json_str = response[start:i+1]
+                    # Remove trailing commas before closing braces (common LLM formatting error)
+                    json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+                    return json_str
+
+        raise ValueError("Unmatched braces in JSON object")
+
+    @staticmethod
     def parse_attribute_design(response: str) -> Dict[str, float]:
         """Parse LLM-designed attributes from response - SUPPORTS EMERGENT TRAITS"""
         import json
-        import re
 
-        # Try to extract JSON object
-        json_match = re.search(r'\{[^}]+\}', response, re.DOTALL)
-        if json_match:
-            try:
-                data = json.loads(json_match.group(0))
+        json_str = PromptParser._extract_json_from_response(response)
+        data = json.loads(json_str)
 
-                # Extract all numeric traits (0.0-1.0 scale)
-                traits = {}
-                for key, value in data.items():
-                    if key in ['reasoning', 'confidence']:
-                        # Special keys preserved as-is
-                        if key == 'confidence':
-                            traits[key] = float(value) if isinstance(value, (int, float)) else 0.1
-                        else:
-                            traits[key] = value
-                    else:
-                        # All other keys treated as trait names
-                        try:
-                            trait_value = float(value)
-                            trait_value = max(0.0, min(1.0, trait_value))  # Clamp to [0, 1]
-                            traits[key] = trait_value
-                        except (ValueError, TypeError):
-                            pass
+        # Extract all traits
+        traits = {}
+        for key, value in data.items():
+            if key in ['reasoning', 'confidence']:
+                traits[key] = value
+            else:
+                trait_value = float(value)
+                trait_value = max(0.0, min(1.0, trait_value))
+                traits[key] = trait_value
 
-                # Ensure we have reasoning and confidence
-                if 'reasoning' not in traits:
-                    traits['reasoning'] = 'No reasoning provided'
-                if 'confidence' not in traits:
-                    traits['confidence'] = 0.1
+        return traits
 
-                return traits
+    @staticmethod
+    def parse_discrete_beliefs(response: str) -> Dict[str, Any]:
+        """Parse discrete belief sets from LLM response (GraphVar1)"""
+        import json
 
-            except (json.JSONDecodeError, ValueError, KeyError):
-                pass
+        json_str = PromptParser._extract_json_from_response(response)
+        data = json.loads(json_str)
+        return data
 
-        # Return minimal defaults if parsing fails
-        return {
-            'confidence': 0.1,
-            'reasoning': 'Failed to parse - no traits identified'
-        }
+    @staticmethod
+    def parse_probabilistic_beliefs(response: str) -> Dict[str, Any]:
+        """Parse probabilistic belief distributions from LLM response (GraphVar2)"""
+        import json
+
+        json_str = PromptParser._extract_json_from_response(response)
+        data = json.loads(json_str)
+        return data

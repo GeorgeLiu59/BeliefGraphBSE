@@ -61,7 +61,7 @@ from datetime import datetime
 
 # LLM and belief graph imports
 import google.generativeai as genai
-from belief_graph import BeliefGraph, MarketEvent, EventType
+from agents.belief_graph import BeliefGraph, MarketEvent, EventType
 from TraderCustomAttributes import TraderCustomAttributes
 import uuid
 import json
@@ -3094,61 +3094,6 @@ No explanation needed."""
             'recent_trades': recent_trades
         }
 
-# Setup separate loggers for each trader type (fresh logs each run)
-bg_logger = logging.getLogger('belief_graph_traders')
-bg_logger.setLevel(logging.DEBUG)
-if not bg_logger.handlers:
-    bg_handler = logging.FileHandler('belief_graph_traders.log', mode='w')  # 'w' mode overwrites existing file
-    bg_formatter = logging.Formatter('%(asctime)s - %(message)s')
-    bg_handler.setFormatter(bg_formatter)
-    bg_logger.addHandler(bg_handler)
-    bg_logger.propagate = False  # Don't propagate to root logger
-
-bgno_logger = logging.getLogger('belief_graph_nocot_traders')
-bgno_logger.setLevel(logging.DEBUG)
-if not bgno_logger.handlers:
-    bgno_handler = logging.FileHandler('belief_graph_nocot_traders.log', mode='w')  # 'w' mode overwrites existing file
-    bgno_formatter = logging.Formatter('%(asctime)s - %(message)s')
-    bgno_handler.setFormatter(bgno_formatter)
-    bgno_logger.addHandler(bgno_handler)
-    bgno_logger.propagate = False  # Don't propagate to root logger
-
-pgco_logger = logging.getLogger('perfect_graph_cot_traders')
-pgco_logger.setLevel(logging.DEBUG)
-if not pgco_logger.handlers:
-    pgco_handler = logging.FileHandler('perfect_graph_cot_traders.log', mode='w')  # 'w' mode overwrites existing file
-    pgco_formatter = logging.Formatter('%(asctime)s - %(message)s')
-    pgco_handler.setFormatter(pgco_formatter)
-    pgco_logger.addHandler(pgco_handler)
-    pgco_logger.propagate = False  # Don't propagate to root logger
-
-pgno_logger = logging.getLogger('perfect_graph_nocot_traders')
-pgno_logger.setLevel(logging.DEBUG)
-if not pgno_logger.handlers:
-    pgno_handler = logging.FileHandler('perfect_graph_nocot_traders.log', mode='w')  # 'w' mode overwrites existing file
-    pgno_formatter = logging.Formatter('%(asctime)s - %(message)s')
-    pgno_handler.setFormatter(pgno_formatter)
-    pgno_logger.addHandler(pgno_handler)
-    pgno_logger.propagate = False  # Don't propagate to root logger
-
-gv1_logger = logging.getLogger('graphvar1_traders')
-gv1_logger.setLevel(logging.DEBUG)
-if not gv1_logger.handlers:
-    gv1_handler = logging.FileHandler('graphvar1_traders.log', mode='w')  # 'w' mode overwrites existing file
-    gv1_formatter = logging.Formatter('%(asctime)s - %(message)s')
-    gv1_handler.setFormatter(gv1_formatter)
-    gv1_logger.addHandler(gv1_handler)
-    gv1_logger.propagate = False  # Don't propagate to root logger
-
-gv2_logger = logging.getLogger('graphvar2_traders')
-gv2_logger.setLevel(logging.DEBUG)
-if not gv2_logger.handlers:
-    gv2_handler = logging.FileHandler('graphvar2_traders.log', mode='w')  # 'w' mode overwrites existing file
-    gv2_formatter = logging.Formatter('%(asctime)s - %(message)s')
-    gv2_handler.setFormatter(gv2_formatter)
-    gv2_logger.addHandler(gv2_handler)
-    gv2_logger.propagate = False  # Don't propagate to root logger
-
 # Belief Graph Trader Class
 class TraderBeliefGraph(Trader):
     """
@@ -3170,7 +3115,7 @@ class TraderBeliefGraph(Trader):
         
         # Import belief graph components
         try:
-            from belief_graph import BeliefGraph, MarketEvent, EventType
+            from agents.belief_graph import BeliefGraph, MarketEvent, EventType
             self.belief_graph = BeliefGraph(asset_id="BSE_ASSET")
             self.MarketEvent = MarketEvent
             self.EventType = EventType
@@ -4042,7 +3987,7 @@ class GraphVar1(Trader):
         
         # Import belief graph components
         try:
-            from belief_graph import GraphVar1, MarketEvent, EventType
+            from agents.belief_graph import GraphVar1, MarketEvent, EventType
             self.belief_graph = GraphVar1(asset_id="BSE_ASSET")
             self.MarketEvent = MarketEvent
             self.EventType = EventType
@@ -4981,7 +4926,7 @@ class GraphVar2(Trader):
         
         # Import belief graph components
         try:
-            from belief_graph import GraphVar2, MarketEvent, EventType
+            from agents.belief_graph import GraphVar2, MarketEvent, EventType
             self.belief_graph = GraphVar2(asset_id="BSE_ASSET")
             self.MarketEvent = MarketEvent
             self.EventType = EventType
@@ -5947,7 +5892,7 @@ class TraderBeliefGraphWithoutCOT(Trader):
         
         # Import belief graph components
         try:
-            from belief_graph import BeliefGraph, MarketEvent, EventType
+            from agents.belief_graph import BeliefGraph, MarketEvent, EventType
             self.belief_graph = BeliefGraph(asset_id="BSE_ASSET")
             self.MarketEvent = MarketEvent
             self.EventType = EventType
@@ -6809,7 +6754,7 @@ class TraderPerfectGraphWithCoT(Trader):
         
         # Import belief graph components
         try:
-            from belief_graph import PerfectBeliefGraph, MarketEvent, EventType
+            from agents.belief_graph import PerfectBeliefGraph, MarketEvent, EventType
             self.belief_graph = PerfectBeliefGraph(asset_id="BSE_ASSET", traders_dict=None)  # Will be set later
             self.MarketEvent = MarketEvent
             self.EventType = EventType
@@ -7725,7 +7670,7 @@ class TraderPerfectGraphWithoutCoT(Trader):
         
         # Import belief graph components
         try:
-            from belief_graph import PerfectBeliefGraph, MarketEvent, EventType
+            from agents.belief_graph import PerfectBeliefGraph, MarketEvent, EventType
             self.belief_graph = PerfectBeliefGraph(asset_id="BSE_ASSET", traders_dict=None)  # Will be set later
             self.MarketEvent = MarketEvent
             self.EventType = EventType
@@ -10096,14 +10041,12 @@ AVAILABLE_TRADER_TYPES = {
 ACTIVE_BUYERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]
 ACTIVE_SELLERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]  # Usually same as buyers
 ACTIVE_PROPTRADERS = [
-    ('LLM', 1),
-    ('BG_JSON_COT', 1), ('BG_NL_COT', 1), ('BG_JSON_NOCOT', 1), ('BG_NL_NOCOT', 1),
-    ('PG_JSON_COT', 1), ('PG_NL_COT', 1), ('PG_JSON_NOCOT', 1), ('PG_NL_NOCOT', 1),
-    ('GV1_JSON_COT', 1), ('GV1_NL_COT', 1), ('GV1_JSON_NOCOT', 1), ('GV1_NL_NOCOT', 1),
-    ('GV2_JSON_COT', 1), ('GV2_NL_COT', 1), ('GV2_JSON_NOCOT', 1), ('GV2_NL_NOCOT', 1),
-    ('GV3_JSON_COT', 1), ('GV3_NL_COT', 1), ('GV3_JSON_NOCOT', 1), ('GV3_NL_NOCOT', 1),
-    ('HM_JSON_COT', 1), ('HM_NL_COT', 1), ('HM_JSON_NOCOT', 1), ('HM_NL_NOCOT', 1),
-]  # All 25 LLM-based agent variants
+    ('BG_JSON_COT', 1),
+    ('GV1_JSON_COT', 1),
+    ('GV2_JSON_COT', 1),
+    ('GV3_JSON_COT', 1),
+    ('HM_JSON_COT', 1),
+]  # 5 LLM agents to prevent API slowdown
 
 # Automatically generate lists of proprietary trader types for filtering
 PROP_TRADER_TYPES = [ttype for ttype, count in ACTIVE_PROPTRADERS]

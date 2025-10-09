@@ -13,8 +13,8 @@ import json
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agents.base_llm_trader import BaseLLMTrader
-from unified_prompts import PromptBuilder, BasePrompts, AdaptiveAttributePrompts, PromptParser
-from belief_graph import GraphVar3
+from .unified_prompts import PromptBuilder, BasePrompts, AdaptiveAttributePrompts, PromptParser
+from .belief_graph import GraphVar3
 from BSE import Order
 
 
@@ -27,7 +27,7 @@ class TraderGV3(BaseLLMTrader):
         self.use_cot = params.get('use_cot', True)
         self.belief_format = params.get('belief_format', 'json')
 
-        self.belief_graph = GraphVar3(asset_id="BSE_ASSET")
+        self.belief_graph = GraphVar3(asset_id="BSE_ASSET", model=self.model, logger=self.logger)
         # Note: We don't add self to our own belief graph - it only tracks OTHER agents
 
         self.attributes = None
@@ -42,24 +42,7 @@ class TraderGV3(BaseLLMTrader):
         if self.attributes_initialized:
             return
 
-        if not self.model:
-            self.attributes = {
-                'aggressiveness': 0.5,
-                'patience': 0.5,
-                'risk_tolerance': 0.5,
-                'momentum_following': 0.5,
-                'mean_reversion': 0.5,
-                'adaptability': 0.5
-            }
-            self.attributes_initialized = True
-            return
-
-        market_ctx = market_context or {
-            'volatility': 'unknown',
-            'trend': 'unknown',
-            'competition': 'unknown',
-            'liquidity': 'unknown'
-        }
+        market_ctx = market_context
 
         prompt = AdaptiveAttributePrompts.design_attributes_prompt(market_ctx)
 
@@ -81,13 +64,11 @@ class TraderGV3(BaseLLMTrader):
         self.attributes_initialized = True
 
         self.logger.info(f"=== DESIGNED ATTRIBUTES ===")
-        self.logger.info(f"Aggressiveness: {self.attributes.get('aggressiveness', 'N/A')}")
-        self.logger.info(f"Patience: {self.attributes.get('patience', 'N/A')}")
-        self.logger.info(f"Risk Tolerance: {self.attributes.get('risk_tolerance', 'N/A')}")
-        self.logger.info(f"Momentum Following: {self.attributes.get('momentum_following', 'N/A')}")
-        self.logger.info(f"Mean Reversion: {self.attributes.get('mean_reversion', 'N/A')}")
-        self.logger.info(f"Adaptability: {self.attributes.get('adaptability', 'N/A')}")
-        self.logger.info(f"Reasoning: {self.attributes.get('reasoning', 'N/A')[:200]}")
+        for key, value in self.attributes.items():
+            if key == 'reasoning':
+                self.logger.info(f"{key.replace('_', ' ').title()}: {str(value)[:200]}")
+            else:
+                self.logger.info(f"{key.replace('_', ' ').title()}: {value}")
         self.logger.info("="*80)
 
         # Note: We don't sync attributes to belief graph because our belief graph only tracks OTHER agents
@@ -111,11 +92,7 @@ class TraderGV3(BaseLLMTrader):
             'trade_count': self.n_trades
         }
 
-        market_ctx = market_context or {
-            'volatility': 'unknown',
-            'trend': 'unknown',
-            'competition': 'unknown'
-        }
+        market_ctx = market_context
 
         prompt = AdaptiveAttributePrompts.adapt_attributes_prompt(
             self.attributes,
@@ -144,12 +121,17 @@ class TraderGV3(BaseLLMTrader):
 
         self.logger.info(f"=== ATTRIBUTES ADAPTED (Trade #{self.n_trades}) ===")
         self.logger.info(f"OLD -> NEW:")
-        for key in ['aggressiveness', 'patience', 'risk_tolerance', 'momentum_following', 'mean_reversion', 'adaptability']:
-            old_val = old_attributes.get(key, 'N/A')
-            new_val = new_attributes.get(key, 'N/A')
-            change = f" ({new_val - old_val:+.2f})" if isinstance(old_val, (int, float)) and isinstance(new_val, (int, float)) else ""
-            self.logger.info(f"{key.replace('_', ' ').title()}: {old_val} -> {new_val}{change}")
-        self.logger.info(f"Reasoning: {new_attributes.get('reasoning', 'N/A')[:200]}")
+        all_keys = set(old_attributes.keys()) | set(new_attributes.keys())
+        for key in sorted(all_keys):
+            old_val = old_attributes.get(key)
+            new_val = new_attributes.get(key)
+            if key == 'reasoning':
+                self.logger.info(f"{key.replace('_', ' ').title()}: {str(new_val)[:200]}")
+            elif isinstance(old_val, (int, float)) and isinstance(new_val, (int, float)):
+                change = f" ({new_val - old_val:+.2f})"
+                self.logger.info(f"{key.replace('_', ' ').title()}: {old_val} -> {new_val}{change}")
+            else:
+                self.logger.info(f"{key.replace('_', ' ').title()}: {old_val} -> {new_val}")
         self.logger.info("="*80)
 
         # Note: Adapted attributes affect our OWN trading decisions, not belief graph
@@ -172,17 +154,8 @@ class TraderGV3(BaseLLMTrader):
             for agent_id in self.belief_graph.agents:
                 if agent_id != self.tid:
                     agent_beliefs = self.belief_graph.get_agent_beliefs(agent_id)
-                    belief_traits = agent_beliefs.get('attributes', {})
-                    agg = belief_traits.get('aggressiveness', 0.5)
-                    patience = belief_traits.get('patience', 0.5)
-                    risk_tol = belief_traits.get('risk_tolerance', 0.5)
-                    conf = belief_traits.get('confidence', 0.1)
-
-                    agg_desc = "very aggressive" if agg > 0.7 else "passive" if agg < 0.3 else "moderately aggressive"
-                    narrative_parts.append(
-                        f"Agent {agent_id} appears {agg_desc} (aggressiveness: {agg:.2f}, "
-                        f"patience: {patience:.2f}, risk_tolerance: {risk_tol:.2f}, confidence: {conf:.2f})"
-                    )
+                    belief_traits = agent_beliefs['attributes']
+                    narrative_parts.append(f"Agent {agent_id}: {belief_traits}")
             return "\n".join(narrative_parts) if narrative_parts else "No agents observed yet."
 
     def getorder(self, time, countdown, lob, p_eq=None, q_eq=None, demand_curve=None, supply_curve=None):
@@ -207,7 +180,7 @@ class TraderGV3(BaseLLMTrader):
         }
 
         prompt = PromptBuilder.build_trading_prompt(agent_config, market_context, trader_state, belief_graph_data=belief_data)
-        decision = self.get_llm_decision(prompt)
+        decision = self.get_llm_decision(prompt, time)
 
         if decision['action'] == 'WAIT':
             return None

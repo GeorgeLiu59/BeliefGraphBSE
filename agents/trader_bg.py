@@ -11,8 +11,8 @@ import json
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agents.base_llm_trader import BaseLLMTrader
-from unified_prompts import PromptBuilder, BasePrompts
-from belief_graph import BeliefGraph
+from .unified_prompts import PromptBuilder, BasePrompts
+from .belief_graph import BeliefGraph
 from BSE import Order
 
 
@@ -56,31 +56,38 @@ class TraderBG(BaseLLMTrader):
             return "\n".join(narrative_parts) if narrative_parts else "No agents observed yet."
 
     def getorder(self, time, countdown, lob, p_eq=None, q_eq=None, demand_curve=None, supply_curve=None):
-        if len(lob['bids']['lob']) <= 0 and len(lob['asks']['lob']) <= 0:
+        try:
+            self.logger.info(f"[GETORDER] Called at time {time:.1f}, job={self.job}, balance=${self.balance:.0f}")
+
+            if len(lob['bids']['lob']) <= 0 and len(lob['asks']['lob']) <= 0:
+                self.logger.info(f"[GETORDER] Empty LOB, returning None")
+                return None
+
+            recent_prices = self.extract_recent_prices(lob, n_prices=5)
+            trader_state = self.build_trader_state()
+            trader_state['recent_prices'] = recent_prices
+
+            market_context = BasePrompts.format_market_context(lob, time, trader_state)
+            belief_data = self.get_belief_data()
+
+            agent_config = {
+                'use_belief_graph': True,
+                'belief_format': self.belief_format,
+                'use_cot': self.use_cot,
+                'graph_quality': 'basic',
+                'job': self.job
+            }
+
+            prompt = PromptBuilder.build_trading_prompt(agent_config, market_context, trader_state, belief_graph_data=belief_data)
+            decision = self.get_llm_decision(prompt, time)
+
+            if decision['action'] == 'WAIT':
+                return None
+
+            return Order(self.tid, 'Bid' if self.job == 'Buy' else 'Ask', decision['price'], 1, time, lob['QID'])
+        except Exception as e:
+            self.logger.error(f"[GETORDER-ERROR] Failed at time {time:.1f}: {e}", exc_info=True)
             return None
-
-        recent_prices = self.extract_recent_prices(lob, n_prices=5)
-        trader_state = self.build_trader_state()
-        trader_state['recent_prices'] = recent_prices
-
-        market_context = BasePrompts.format_market_context(lob, time, trader_state)
-        belief_data = self.get_belief_data()
-
-        agent_config = {
-            'use_belief_graph': True,
-            'belief_format': self.belief_format,
-            'use_cot': self.use_cot,
-            'graph_quality': 'basic',
-            'job': self.job
-        }
-
-        prompt = PromptBuilder.build_trading_prompt(agent_config, market_context, trader_state, belief_graph_data=belief_data)
-        decision = self.get_llm_decision(prompt)
-
-        if decision['action'] == 'WAIT':
-            return None
-
-        return Order(self.tid, 'Bid' if self.job == 'Buy' else 'Ask', decision['price'], 1, time, lob['QID'])
 
     def respond(self, time, lob, trade, verbose):
         """Update belief graph when market events occur"""

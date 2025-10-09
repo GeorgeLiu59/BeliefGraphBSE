@@ -12,7 +12,7 @@ import google.generativeai as genai
 from typing import Dict, Any, Optional, Tuple
 from agent_attributes import AttributeManager, AttributeDesigner
 from llm_attribute_prompts import AttributePromptTemplates, AttributePromptParser
-from belief_graph import BeliefGraph, MarketEvent, EventType
+from agents.belief_graph import BeliefGraph, MarketEvent, EventType
 
 
 class TraderAdaptive:

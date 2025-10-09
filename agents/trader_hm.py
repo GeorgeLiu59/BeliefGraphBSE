@@ -13,8 +13,8 @@ import json
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from agents.base_llm_trader import BaseLLMTrader
-from unified_prompts import BasePrompts, HypotheticalMindPrompts
-from belief_graph import BeliefGraph
+from .unified_prompts import BasePrompts, HypotheticalMindPrompts
+from .belief_graph import BeliefGraph
 from BSE import Order
 
 
@@ -58,32 +58,50 @@ class TraderHM(BaseLLMTrader):
     def generate_hypotheses(self, market_context: str, target_trader_id: str) -> Dict:
         """Generate hypothesis about specific opponent's strategy"""
         if not self.model:
+            self.logger.warning(f"[HM-HYPGEN] No model available for hypothesis generation")
             return {}
+
+        self.logger.info(f"[HM-HYPGEN] Generating hypothesis for {target_trader_id}")
 
         prompt = HypotheticalMindPrompts.hypothesis_generation_prompt(
             market_context,
             self.interaction_history[-5:] if self.interaction_history else []
         )
 
+        self.logger.info("=== HYPOTHESIS GENERATION PROMPT ===")
+        self.logger.info(prompt[:500])
+        self.logger.info("="*80)
+
         response = self.model.generate_content(
             prompt,
             generation_config=self.model._generation_config
         )
 
+        self.logger.info("=== HYPOTHESIS GENERATION RESPONSE ===")
+        self.logger.info(response.text[:500])
+        self.logger.info("="*80)
+
         try:
-            hypotheses_data = json.loads(response.text)
+            from .unified_prompts import PromptParser
+            json_str = PromptParser._extract_json_from_response(response.text)
+            hypotheses_data = json.loads(json_str)
             hypotheses_list = hypotheses_data.get('hypotheses', [])
 
             if hypotheses_list:
                 hypothesis = hypotheses_list[0]
-                return {
+                result = {
                     'target_trader_id': target_trader_id,
                     'possible_other_player_strategy': hypothesis.get('description', 'Unknown strategy'),
                     'value': 0,
                     'other_player_next_action': {}
                 }
+                self.logger.info(f"[HM-HYPGEN] Generated hypothesis: {result['possible_other_player_strategy'][:100]}")
+                return result
+            self.logger.warning(f"[HM-HYPGEN] No hypotheses in LLM response")
             return {}
-        except:
+        except Exception as e:
+            self.logger.error(f"[HM-HYPGEN] Failed to parse hypothesis: {e}")
+            self.logger.error(f"[HM-HYPGEN] Raw response: {response.text[:200]}")
             return {}
 
     def get_belief_data(self) -> str:
@@ -151,7 +169,10 @@ class TraderHM(BaseLLMTrader):
                            if v.get('target_trader_id') == target_trader_id}
 
         if not trader_hypotheses:
+            self.logger.info(f"[HM-EVAL] No hypotheses for {target_trader_id} (not tracked when hypotheses generated)")
             return
+
+        self.logger.info(f"[HM-EVAL] Evaluating {len(trader_hypotheses)} hypotheses for {target_trader_id}")
 
         latest_key = max(trader_hypotheses.keys())
         sorted_keys = sorted([key for key in trader_hypotheses if key != latest_key],
@@ -165,7 +186,10 @@ class TraderHM(BaseLLMTrader):
                 valid_keys2eval.append(key)
 
         if not valid_keys2eval:
+            self.logger.info(f"[HM-EVAL] No valid hypotheses to evaluate for {target_trader_id} (no predictions stored)")
             return
+
+        self.logger.info(f"[HM-EVAL] Evaluating {len(valid_keys2eval)} valid hypotheses")
 
         self.good_hypothesis_found = False
 
@@ -175,10 +199,19 @@ class TraderHM(BaseLLMTrader):
             if not self.model:
                 continue
 
+            self.logger.info(f"[HM-EVAL] Evaluating hypothesis #{key}")
+            self.logger.info("=== HYPOTHESIS EVALUATION PROMPT ===")
+            self.logger.info(eval_prompt[:300])
+            self.logger.info("="*80)
+
             response = self.model.generate_content(
                 eval_prompt,
                 generation_config=self.model._generation_config
             )
+
+            self.logger.info("=== HYPOTHESIS EVALUATION RESPONSE ===")
+            self.logger.info(response.text[:300])
+            self.logger.info("="*80)
 
             try:
                 pred_label = self._extract_eval_result(response.text)
@@ -186,17 +219,25 @@ class TraderHM(BaseLLMTrader):
                 old_value = self.opponent_hypotheses[key].get('value', 0)
                 if pred_label.get('evaluate_predicted_behavior'):
                     prediction_error = self.correct_guess_reward - old_value
+                    self.logger.info(f"[HM-EVAL] Hypothesis #{key} MATCHED (old value: {old_value:.3f})")
                 else:
                     prediction_error = -self.correct_guess_reward - old_value
+                    self.logger.info(f"[HM-EVAL] Hypothesis #{key} MISMATCHED (old value: {old_value:.3f})")
 
                 self.opponent_hypotheses[key]['value'] = old_value + self.alpha * prediction_error
                 new_value = self.opponent_hypotheses[key]['value']
 
+                self.logger.info(f"[HM-EVAL] Hypothesis #{key} updated: {old_value:.3f} -> {new_value:.3f}")
+
                 if new_value > self.good_hypothesis_thr:
                     self.good_hypothesis_found = True
+                    self.logger.info(f"[HM-GOOD] Hypothesis #{key} is GOOD (value {new_value:.3f} > threshold {self.good_hypothesis_thr})")
 
             except Exception as e:
+                self.logger.error(f"[HM-EVAL] Failed to evaluate hypothesis #{key}: {e}")
                 continue
+
+        self.logger.info(f"[HM-EVAL] Evaluation complete. good_hypothesis_found = {self.good_hypothesis_found}")
 
     def _extract_eval_result(self, response_text: str) -> Dict:
         """Extract evaluation result from LLM response"""
@@ -316,52 +357,67 @@ class TraderHM(BaseLLMTrader):
         return prompt
 
     def getorder(self, time, countdown, lob, p_eq=None, q_eq=None, demand_curve=None, supply_curve=None):
-        if len(lob['bids']['lob']) <= 0 and len(lob['asks']['lob']) <= 0:
-            return None
+        try:
+            self.logger.info(f"[GETORDER] Called at time {time:.1f}, job={self.job}, balance=${self.balance:.0f}")
 
-        recent_prices = self.extract_recent_prices(lob, n_prices=5)
-        trader_state = self.build_trader_state()
-        trader_state['recent_prices'] = recent_prices
+            if len(lob['bids']['lob']) <= 0 and len(lob['asks']['lob']) <= 0:
+                self.logger.info(f"[GETORDER] Empty LOB, returning None")
+                return None
 
-        market_context = BasePrompts.format_market_context(lob, time, trader_state)
+            recent_prices = self.extract_recent_prices(lob, n_prices=5)
+            trader_state = self.build_trader_state()
+            trader_state['recent_prices'] = recent_prices
 
-        if len(self.interaction_history) % 5 == 0:
-            for agent_id in self.belief_graph.agents:
-                if agent_id != self.tid:
-                    hypothesis = self.generate_hypotheses(market_context, agent_id)
-                    if hypothesis:
-                        hypothesis_key = self.interaction_num + len(self.opponent_hypotheses)
-                        self.opponent_hypotheses[hypothesis_key] = hypothesis
+            market_context = BasePrompts.format_market_context(lob, time, trader_state)
 
-        if self.good_hypothesis_found:
-            strategic_prompt = self.generate_strategic_order_with_all_good_hypotheses(lob, time, countdown)
-            if strategic_prompt:
-                decision = self.get_llm_decision(strategic_prompt)
+            if len(self.interaction_history) % 5 == 0:
+                self.logger.info(f"[HM-TRIGGER] Hypothesis generation triggered (interaction_history len={len(self.interaction_history)})")
+                for agent_id in self.belief_graph.agents:
+                    if agent_id != self.tid:
+                        hypothesis = self.generate_hypotheses(market_context, agent_id)
+                        if hypothesis:
+                            hypothesis_key = self.interaction_num + len(self.opponent_hypotheses)
+                            self.opponent_hypotheses[hypothesis_key] = hypothesis
+                            self.logger.info(f"[HM-STORED] Stored hypothesis #{hypothesis_key} for {agent_id}")
+                self.logger.info(f"[HM-TOTAL] Total hypotheses stored: {len(self.opponent_hypotheses)}")
+
+            if self.good_hypothesis_found:
+                self.logger.info(f"[HM-INFERENCE] Using STRATEGIC mode with good hypotheses")
+                good_hyps = self.gather_all_good_hypotheses()
+                self.logger.info(f"[HM-INFERENCE] Good hypotheses count: {sum(len(hyps) for hyps in good_hyps.values())}")
+                strategic_prompt = self.generate_strategic_order_with_all_good_hypotheses(lob, time, countdown)
+                if strategic_prompt:
+                    decision = self.get_llm_decision(strategic_prompt, time)
+                else:
+                    self.logger.warning(f"[HM-INFERENCE] Strategic prompt empty, falling back to vanilla")
+                    vanilla_prompt = self.generate_vanilla_order_prompt(lob, time, countdown)
+                    decision = self.get_llm_decision(vanilla_prompt, time)
             else:
+                self.logger.info(f"[HM-INFERENCE] Using VANILLA mode (no good hypotheses yet)")
                 vanilla_prompt = self.generate_vanilla_order_prompt(lob, time, countdown)
-                decision = self.get_llm_decision(vanilla_prompt)
-        else:
-            vanilla_prompt = self.generate_vanilla_order_prompt(lob, time, countdown)
-            decision = self.get_llm_decision(vanilla_prompt)
+                decision = self.get_llm_decision(vanilla_prompt, time)
 
-        self.interaction_history.append({
-            'time': time,
-            'action': decision['action'],
-            'price': decision.get('price', 0),
-            'reasoning': decision['reasoning'][:100]
-        })
+            self.interaction_history.append({
+                'time': time,
+                'action': decision['action'],
+                'price': decision.get('price', 0),
+                'reasoning': decision['reasoning'][:100]
+            })
 
-        if len(self.interaction_history) > self.max_interaction_history:
-            self.interaction_history = self.interaction_history[-self.max_interaction_history:]
+            if len(self.interaction_history) > self.max_interaction_history:
+                self.interaction_history = self.interaction_history[-self.max_interaction_history:]
 
-        if decision['action'] == 'WAIT':
+            if decision['action'] == 'WAIT':
+                return None
+
+            return Order(self.tid, 'Bid' if self.job == 'Buy' else 'Ask', decision['price'], 1, time, lob['QID'])
+        except Exception as e:
+            self.logger.error(f"[GETORDER-ERROR] Failed at time {time:.1f}: {e}", exc_info=True)
             return None
-
-        return Order(self.tid, 'Bid' if self.job == 'Buy' else 'Ask', decision['price'], 1, time, lob['QID'])
 
     def respond(self, time, lob, trade, verbose):
         """Update belief graph when market events occur and evaluate hypotheses"""
-        from belief_graph import MarketEvent, EventType
+        from .belief_graph import MarketEvent, EventType
 
         self.logger.debug(f"[HM-RESPOND] Called at time {time:.1f}")
         events_processed = 0
@@ -418,7 +474,7 @@ class TraderHM(BaseLLMTrader):
                             'predicted_price': trade_price
                         }
 
-                self.logger.debug(f"[HM-EVAL] Evaluating hypotheses for {opponent_trader_id}")
+                self.logger.info(f"[HM-EVAL] Starting evaluation for {opponent_trader_id}")
                 self.evaluate_opponent_hypotheses(opponent_trader_id)
 
                 good_hyps = self.gather_all_good_hypotheses()

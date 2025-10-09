@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from BSE import Trader
-from unified_prompts import PromptBuilder, PromptParser, BasePrompts
+from .unified_prompts import PromptBuilder, PromptParser, BasePrompts
 
 
 class BaseLLMTrader(Trader):
@@ -49,7 +49,13 @@ class BaseLLMTrader(Trader):
         self.trading_history = []
         self.max_history = 50
 
+        self.decision_cooldown = params.get('decision_cooldown', 0.5)
+        self.last_decision_time = -999
+        self.last_decision = None
+        self.cooldown_hits = 0
+
         self.logger = self._setup_logger(ttype, tid)
+        self.logger.info(f"[INIT] Decision cooldown: {self.decision_cooldown}s")
 
     def _setup_logger(self, ttype: str, tid: str) -> logging.Logger:
         """Set up dedicated logger for this agent variant"""
@@ -108,12 +114,17 @@ class BaseLLMTrader(Trader):
             'recent_prices': []
         }
 
-    def get_llm_decision(self, prompt: str) -> Dict[str, Any]:
-        """Get decision from LLM"""
+    def get_llm_decision(self, prompt: str, current_time: float = None) -> Dict[str, Any]:
+        """Get decision from LLM with cooldown caching"""
         if not self.model:
             return {'action': 'WAIT', 'price': None, 'reasoning': 'No model available'}
 
-        self.logger.info(f"=== LLM PROMPT AT TIME ===")
+        if current_time and self.last_decision and (current_time - self.last_decision_time) < self.decision_cooldown:
+            self.cooldown_hits += 1
+            self.logger.info(f"[COOLDOWN] Reusing decision from {self.last_decision_time:.1f}s (cooldown: {self.decision_cooldown}s, hits: {self.cooldown_hits})")
+            return self.last_decision
+
+        self.logger.info(f"=== LLM PROMPT AT TIME {current_time if current_time else 'N/A'} ===")
         self.logger.info("="*80)
         self.logger.info(prompt)
         self.logger.info("="*80)
@@ -142,10 +153,16 @@ class BaseLLMTrader(Trader):
         self.logger.info(f'Current Job: {self.job}')
         self.logger.info(f'Balance: ${self.balance:.2f}')
         self.logger.info(f'Inventory: {self.inventory}')
+
+        if current_time:
+            self.last_decision_time = current_time
+            self.last_decision = decision
+
         return decision
 
     def getorder(self, time, countdown, lob, p_eq=None, q_eq=None, demand_curve=None, supply_curve=None):
         """Main trading method - to be implemented by subclasses"""
+        self.logger.debug(f"[GETORDER] Called at time {time:.1f}")
         raise NotImplementedError("Subclasses must implement getorder()")
 
     def bookkeep(self, time, trade, order, verbose):
@@ -169,6 +186,9 @@ class BaseLLMTrader(Trader):
                 self.last_purchase_price = transaction_price
                 self.inventory = 1
                 self.job = 'Sell'
+                self.last_decision = None
+                self.logger.info(f"[COOLDOWN-RESET] Job changed to {self.job}, cooldown stats: {self.cooldown_hits} cache hits")
+                self.cooldown_hits = 0
                 self.trading_history.append({
                     'time': time,
                     'event': 'BOUGHT',
@@ -183,6 +203,9 @@ class BaseLLMTrader(Trader):
                 self.balance += profit
                 self.inventory = 0
                 self.job = 'Buy'
+                self.last_decision = None
+                self.logger.info(f"[COOLDOWN-RESET] Job changed to {self.job}, cooldown stats: {self.cooldown_hits} cache hits")
+                self.cooldown_hits = 0
                 self.trading_history.append({
                     'time': time,
                     'event': 'SOLD',
@@ -227,7 +250,7 @@ class BaseLLMTrader(Trader):
 
     def process_and_log_market_events(self, time, lob, trade):
         """Process market events with comprehensive logging - shared by all belief graph traders"""
-        from belief_graph import MarketEvent, EventType
+        from .belief_graph import MarketEvent, EventType
 
         events_processed = 0
 
