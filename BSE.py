@@ -10041,12 +10041,13 @@ AVAILABLE_TRADER_TYPES = {
 ACTIVE_BUYERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]
 ACTIVE_SELLERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]  # Usually same as buyers
 ACTIVE_PROPTRADERS = [
+    ('LLM', 1),
     ('BG_JSON_COT', 1),
     ('GV1_JSON_COT', 1),
     ('GV2_JSON_COT', 1),
     ('GV3_JSON_COT', 1),
     ('HM_JSON_COT', 1),
-]  # 5 LLM agents to prevent API slowdown
+]  # 6 LLM agents (1 baseline + 5 belief graph variants)
 
 # Automatically generate lists of proprietary trader types for filtering
 PROP_TRADER_TYPES = [ttype for ttype, count in ACTIVE_PROPTRADERS]

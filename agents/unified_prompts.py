@@ -838,9 +838,12 @@ class PromptParser:
         # Extract all traits
         traits = {}
         for key, value in data.items():
-            if key in ['reasoning', 'confidence']:
-                traits[key] = value
+            key_lower = key.lower()
+            if key_lower in ['reasoning', 'confidence']:
+                traits[key_lower] = value
             else:
+                if not isinstance(value, (int, float)):
+                    raise ValueError(f"Trait '{key}' must have numeric value, got: {type(value).__name__} - '{str(value)[:100]}'")
                 trait_value = float(value)
                 trait_value = max(0.0, min(1.0, trait_value))
                 traits[key] = trait_value

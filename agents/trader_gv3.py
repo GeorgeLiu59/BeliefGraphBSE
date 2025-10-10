@@ -164,6 +164,9 @@ class TraderGV3(BaseLLMTrader):
 
         self.check_and_adapt_attributes()
 
+        if len(lob['bids']['lob']) <= 0 and len(lob['asks']['lob']) <= 0:
+            return None
+
         recent_prices = self.extract_recent_prices(lob, n_prices=5)
         trader_state = self.build_trader_state()
         trader_state['recent_prices'] = recent_prices
