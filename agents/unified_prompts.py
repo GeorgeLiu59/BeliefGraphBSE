@@ -823,9 +823,29 @@ class PromptParser:
                     json_str = response[start:i+1]
                     # Remove trailing commas before closing braces (common LLM formatting error)
                     json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+                    # Fix invalid escape sequences
+                    json_str = PromptParser._fix_escape_sequences(json_str)
                     return json_str
 
         raise ValueError("Unmatched braces in JSON object")
+
+    @staticmethod
+    def _fix_escape_sequences(json_str: str) -> str:
+        """Fix invalid escape sequences in JSON string"""
+        import re
+
+        # Replace invalid escapes with properly escaped versions
+        # Valid JSON escapes: \" \\ \/ \b \f \n \r \t \uXXXX
+        # Find all backslashes followed by a character
+        def fix_escape(match):
+            char_after_backslash = match.group(1)
+            # Keep valid JSON escapes
+            if char_after_backslash in ['"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u']:
+                return match.group(0)
+            # Escape the backslash for invalid escapes
+            return '\\\\' + char_after_backslash
+
+        return re.sub(r'\\(.)', fix_escape, json_str)
 
     @staticmethod
     def parse_attribute_design(response: str) -> Dict[str, float]:
