@@ -57,6 +57,7 @@ import os
 import time as chrono
 import csv
 import logging
+import signal
 from datetime import datetime
 
 # LLM and belief graph imports
@@ -71,6 +72,21 @@ from hm_trader import TraderLLM_HM
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Graceful shutdown handling
+shutdown_requested = False
+
+def signal_handler(sig, frame):
+    """Handle Ctrl+C gracefully by setting shutdown flag"""
+    global shutdown_requested
+    print("\n\n⚠️  Ctrl+C detected! Fast-forwarding to end of session and saving data...")
+    print("Press Ctrl+C again to force quit (data may be lost)\n")
+    shutdown_requested = True
+    # Re-register to default handler so second Ctrl+C will force quit
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
+
+# Register the signal handler
+signal.signal(signal.SIGINT, signal_handler)
 
 # a bunch of system constants (globals)
 bse_sys_minprice = 1                    # minimum price in the system, in cents/pennies
@@ -9694,6 +9710,10 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     :return: <nothing>.
     """
 
+    # Reset shutdown flag for this session
+    global shutdown_requested
+    shutdown_requested = False
+
     def dump_strats_frame(frametime, stratfile, trdrs):
         """
         Write one frame of strategy snapshot
@@ -9847,8 +9867,13 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 
     while time < endtime:
 
+        # Check for graceful shutdown
+        if shutdown_requested:
+            print("Gracefully ending session and saving all data...")
+            break
+
         time_left = (endtime - time) / session_duration
-        
+
         current_timestep += 1
         if current_timestep % 100 == 0:  # Every 1k timesteps
             print(f"Progress: {current_timestep:,}/{total_timesteps:,} ({current_timestep/total_timesteps*100:.1f}%)")
@@ -9980,8 +10005,14 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
             print(f"{rank}. {tid} ({ttype}): ${net_worth} (${cash} cash + ${inventory} inventory)")
         else:
             print(f"{rank}. {tid} ({ttype}): ${net_worth} (${cash} cash)")
-    
+
     print("="*60)
+
+    # Print completion message
+    if shutdown_requested:
+        print("\n✅ Session ended gracefully. All data has been saved.")
+    else:
+        print("\n✅ Session completed successfully. All data has been saved.")
 
 
 #############################
@@ -10083,7 +10114,7 @@ if __name__ == "__main__":
         price_offset_filename = sys.argv[1]
 
     # set up common parameters for all market sessions
-    n_days = 1/1440
+    n_days = 1.0  # Full trading day (24 hours)
     hours_in_a_day = 24     # how many hours the exchange operates for in a working day (e.g. NYSE = 7.5)
     start_time = 0.0
     end_time = 60.0 * 60.0 * hours_in_a_day * n_days
