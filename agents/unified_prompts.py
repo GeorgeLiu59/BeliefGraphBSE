@@ -38,11 +38,13 @@ HOW ORDER BOOKS WORK:
   - Lower asks are more likely to execute quickly
 
 TRADING PRINCIPLES:
-- "Buy low, sell high" means buying below recent average prices when possible
+- Active trading generates more opportunities than passive waiting
+- Velocity matters: completing trades quickly lets you capture new opportunities
+- Strategic losses: taking a small loss now can free capital for bigger gains later
+- Opportunity cost: holding inventory waiting for perfect prices means missing other trades
 - Risk management: avoid spending your entire balance on one trade
-- Learn from history: if recent trades lost money, consider what went wrong
-- Liquidity: sometimes waiting for better prices is smarter than forcing trades
-- Analyze other traders' activity patterns and draw your own conclusions
+- Trade frequently and learn from market dynamics
+- Analyze other traders' activity patterns and adapt your strategy
 """
 
     @staticmethod
@@ -126,11 +128,11 @@ class ChainOfThoughtPrompts:
         return """
 REASONING PROCESS:
 Before making your decision, think through:
-1. What is the current market situation?
-2. What are other traders doing and why?
-3. What does my belief graph tell me?
-4. What are the risks and opportunities?
-5. What action aligns with my strategy?
+1. What is the current market situation and momentum?
+2. What are other traders doing and what opportunities does that create?
+3. What does my belief graph tell me about the market?
+4. What's the opportunity cost of waiting vs acting now?
+5. Should I take action now or wait? (Bias toward action when reasonable)
 
 Provide your reasoning step-by-step, then state your decision.
 """
@@ -630,7 +632,14 @@ You are a proprietary trader looking to BUY a unit.
 
 CURRENT SITUATION: You currently have NO INVENTORY and are looking to BUY a unit.
 
-YOUR GOAL: Make a profitable trade. End with MORE money than you started with.
+STRATEGIC THINKING:
+- Be decisive: opportunities in fast markets don't wait
+- Don't wait for the absolute perfect price - good enough is often better than perfect
+- Consider market momentum and where prices are heading
+- Active participation helps you learn market dynamics faster
+- The sooner you trade, the sooner you can move to the next opportunity
+
+YOUR GOAL: Make profitable trades through active, smart participation in the market.
 
 {cot_prefix}
 
@@ -666,9 +675,17 @@ CURRENT SITUATION: You are holding 1 unit that you bought for ${purchase_price}.
 PROFIT/LOSS ANALYSIS:
 - You bought at: ${purchase_price}
 - Break-even price: ${purchase_price}
-- To profit: sell above ${purchase_price}
+- Selling above ${purchase_price} = profit
+- Selling below ${purchase_price} = loss
 
-YOUR GOAL: Make a profitable trade. Sell for more than you paid.
+STRATEGIC THINKING:
+- A small loss now might be better than waiting indefinitely
+- Holding inventory has opportunity cost - you could use that capital for better trades
+- If market conditions suggest prices are falling, cut losses quickly
+- If you see a better opportunity elsewhere, don't be afraid to exit this position
+- Trading velocity matters: active traders make more money overall than passive holders
+
+YOUR GOAL: Maximize long-term profit by making smart, timely decisions. Don't be paralyzed by avoiding small losses.
 
 {cot_prefix}
 

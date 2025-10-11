@@ -10009,32 +10009,14 @@ AVAILABLE_TRADER_TYPES = {
     'PT1': {'class': 'TraderPT1', 'balance_type': 'prop', 'params': {'bid_percent': 0.95, 'ask_delta': 2, 'n_past_trades': 5}},
     'PT2': {'class': 'TraderPT2', 'balance_type': 'prop', 'params': {'bid_percent': 0.99, 'ask_delta': 2, 'n_past_trades': 5}},
 
-    # Proprietary traders - LLM-Based (all 25 variants from AgentFactory)
+    # Proprietary traders - LLM-Based (7 variants: Baseline + 6 belief graph types, all NL_COT)
     'LLM': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'BG_JSON_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
     'BG_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'BG_JSON_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'BG_NL_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'PG_JSON_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
     'PG_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'PG_JSON_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'PG_NL_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'GV1_JSON_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
     'GV1_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'GV1_JSON_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'GV1_NL_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'GV2_JSON_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
     'GV2_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'GV2_JSON_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'GV2_NL_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'GV3_JSON_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
     'GV3_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'GV3_JSON_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'GV3_NL_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'HM_JSON_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
     'HM_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'HM_JSON_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
-    'HM_NL_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
 }
 
 # CONFIGURATION: Edit these to control which traders are included
@@ -10042,27 +10024,13 @@ ACTIVE_BUYERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]
 ACTIVE_SELLERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]  # Usually same as buyers
 ACTIVE_PROPTRADERS = [
     ('LLM', 1),
-    ('BG_JSON_COT', 1),
-    ('BG_JSON_NOCOT', 1),
     ('BG_NL_COT', 1),
-    ('BG_NL_NOCOT', 1),
-    ('GV1_JSON_COT', 1),
-    ('GV1_JSON_NOCOT', 1),
+    ('PG_NL_COT', 1),
     ('GV1_NL_COT', 1),
-    ('GV1_NL_NOCOT', 1),
-    ('GV2_JSON_COT', 1),
-    ('GV2_JSON_NOCOT', 1),
     ('GV2_NL_COT', 1),
-    ('GV2_NL_NOCOT', 1),
-    ('GV3_JSON_COT', 1),
-    ('GV3_JSON_NOCOT', 1),
     ('GV3_NL_COT', 1),
-    ('GV3_NL_NOCOT', 1),
-    ('HM_JSON_COT', 1),
-    ('HM_JSON_NOCOT', 1),
     ('HM_NL_COT', 1),
-    ('HM_NL_NOCOT', 1),
-]  # 21 LLM agents (1 baseline + 5 belief graph types * 4 formats)
+]  # 7 LLM agents (1 baseline + 6 belief graph types, all NL_COT)
 
 # Automatically generate lists of proprietary trader types for filtering
 PROP_TRADER_TYPES = [ttype for ttype, count in ACTIVE_PROPTRADERS]
