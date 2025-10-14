@@ -29,8 +29,6 @@ class TraderHM(BaseLLMTrader):
         self.use_cot = params.get('use_cot', True)
         self.belief_format = params.get('belief_format', 'json')
 
-        self.belief_update_interval = 5
-
         self.belief_graph = BeliefGraph(asset_id="BSE_ASSET")
         self.belief_graph.add_agent(tid)
 
@@ -41,7 +39,6 @@ class TraderHM(BaseLLMTrader):
         )
 
         self.attributes = {
-            'aggressiveness': 0.6,
             'learning_rate': 0.6,
             'hypothesis_threshold': 0.3,
             'exploration_rate': 0.5,
@@ -51,7 +48,6 @@ class TraderHM(BaseLLMTrader):
 
         if self.tid in self.belief_graph.nodes:
             agent_node = self.belief_graph.nodes[self.tid]
-            agent_node.aggressiveness_score = self.attributes['aggressiveness']
             agent_node.strategy_type = 'Hypothetical-Minds'
 
         self.logger.info(f"[HM-INIT] {tid}: Initialized with HypothesisScaffold")
@@ -227,4 +223,4 @@ class TraderHM(BaseLLMTrader):
                     self.belief_graph.update_beliefs(event)
                     events_processed += 1
 
-        self.log_belief_graph_update(time, events_processed)
+        self.log_belief_graph_update(time, events_processed, lob)

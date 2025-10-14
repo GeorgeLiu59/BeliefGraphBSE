@@ -32,7 +32,6 @@ class TraderBG(BaseLLMTrader):
         """Get belief graph data in configured format"""
         if self.belief_format == 'json':
             beliefs = {
-                'aggressiveness_scores': {},
                 'strategy_beliefs': {},
                 'market_sentiment': 'unknown',
                 'risk_assessment': 'unknown',
@@ -40,17 +39,14 @@ class TraderBG(BaseLLMTrader):
             }
             for agent_id in self.belief_graph.agents:
                 if agent_id != self.tid:
-                    beliefs['aggressiveness_scores'][agent_id] = self.belief_graph.get_aggressiveness(agent_id)
                     beliefs['strategy_beliefs'][agent_id] = self.belief_graph.get_beliefs(agent_id)
             return json.dumps(beliefs, indent=2)
         else:
             narrative_parts = []
             for agent_id in self.belief_graph.agents:
                 if agent_id != self.tid:
-                    agg = self.belief_graph.get_aggressiveness(agent_id)
                     beliefs = self.belief_graph.get_beliefs(agent_id)
-                    agg_desc = "very aggressive" if agg > 0.7 else "passive" if agg < 0.3 else "moderately aggressive"
-                    narrative_parts.append(f"Agent {agent_id} appears {agg_desc} (aggressiveness: {agg:.2f}).")
+                    narrative_parts.append(f"Agent {agent_id} observed")
                     if beliefs:
                         narrative_parts.append(f"  Their strategy seems to be: {beliefs}")
             return "\n".join(narrative_parts) if narrative_parts else "No agents observed yet."
@@ -92,4 +88,4 @@ class TraderBG(BaseLLMTrader):
     def respond(self, time, lob, trade, verbose):
         """Update belief graph when market events occur"""
         events_processed = self.process_and_log_market_events(time, lob, trade)
-        self.log_belief_graph_update(time, events_processed)
+        self.log_belief_graph_update(time, events_processed, lob)

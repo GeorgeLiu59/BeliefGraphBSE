@@ -21,6 +21,12 @@ def analyze_proprietary_traders(filename):
 
     with open(filename, 'r') as f:
         reader = csv.DictReader(f)
+
+        if reader.fieldnames is None:
+            print(f"Error: CSV file {filename} is empty or has no headers")
+            print("The file may not have been properly written during shutdown")
+            return {}
+
         trader_columns = [col for col in reader.fieldnames if col.endswith('_NetWorth')]
 
         for row in reader:
@@ -94,6 +100,11 @@ def create_research_plot(prop_traders, output_filename):
             trader_names.append(trader_type)
     
     sorted_data = sorted(zip(trader_names, final_net_worths), key=lambda x: x[1], reverse=True)
+
+    if not sorted_data:
+        print("No trader data available to plot")
+        return
+
     sorted_names, sorted_net_worths = zip(*sorted_data)
 
     bars = ax1.bar(range(len(sorted_names)), sorted_net_worths,
@@ -134,12 +145,30 @@ def create_research_plot(prop_traders, output_filename):
     
     print(f"Research plot created: {output_filename}")
 
+def find_latest_csv():
+    """Find the most recent prop_net_worths CSV file"""
+    import glob
+    import os
+
+    csv_files = glob.glob("bse_*_prop_net_worths.csv")
+    if not csv_files:
+        return None
+
+    # Sort by modification time, newest first
+    csv_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+    return csv_files[0]
+
 def main():
     """Main analysis function"""
     if len(sys.argv) > 1:
         net_worth_file = sys.argv[1]
     else:
-        net_worth_file = "bse_d000_i10_0001_prop_net_worths.csv"
+        net_worth_file = find_latest_csv()
+        if net_worth_file is None:
+            print("No prop_net_worths CSV files found!")
+            print("Run the BSE simulation first to generate data.")
+            return
+        print(f"Using most recent file: {net_worth_file}")
     
     try:
         # Analyze proprietary trader data

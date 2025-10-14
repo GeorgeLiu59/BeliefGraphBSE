@@ -50,7 +50,7 @@ class BaseLLMTrader(Trader):
         self.max_history = 50
 
         self.last_belief_update_time = 0.0
-        self.belief_update_interval = 5.0
+        self.belief_update_interval = 3.0  # adjust this if LLM is not trading
 
         self.logger = self._setup_logger(ttype, tid)
 
@@ -213,15 +213,24 @@ class BaseLLMTrader(Trader):
         # Subclasses can override this, but this provides default comprehensive logging
         pass
 
-    def log_belief_graph_update(self, time, events_processed):
+    def log_belief_graph_update(self, time, events_processed, lob=None):
         """Log belief graph state after updates - called by subclasses"""
         self.logger.info(f"[UPDATE-SUMMARY] Processed {events_processed} market events at time {time:.1f}")
 
         if hasattr(self, 'belief_graph'):
             self.logger.info(f"=== BELIEF GRAPH STATE AT TIME {time:.1f} ===")
             try:
-                graph_json = self.belief_graph.to_json()
-                self.logger.info(graph_json)
+                if hasattr(self.belief_graph, 'query_action') and lob:
+                    current_market_state = {
+                        'best_bid': lob.get('bids', {}).get('best'),
+                        'best_ask': lob.get('asks', {}).get('best'),
+                        'time_remaining': 0
+                    }
+                    structured_beliefs = self.belief_graph.query_action(self.tid, current_market_state)
+                    self.logger.info(json.dumps(structured_beliefs, indent=2))
+                else:
+                    graph_json = self.belief_graph.to_json()
+                    self.logger.info(graph_json)
                 self.logger.info("="*80)
             except Exception as e:
                 self.logger.error(f"[GRAPH-ERROR] Failed to serialize belief graph: {e}")
@@ -239,6 +248,13 @@ class BaseLLMTrader(Trader):
 
         self.last_belief_update_time = time
         self.logger.info(f"[BELIEF-THROTTLE] {self.tid}: Running belief graph update at time {time:.1f}")
+
+        # Update asset node with current LOB state FIRST
+        if hasattr(self.belief_graph, 'asset_node'):
+            if lob['bids']['n'] > 0:
+                self.belief_graph.asset_node.current_best_bid = lob['bids']['best']
+            if lob['asks']['n'] > 0:
+                self.belief_graph.asset_node.current_best_ask = lob['asks']['best']
 
         events_processed = 0
 

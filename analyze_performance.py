@@ -15,10 +15,13 @@ STARTING_BALANCES = {
     'SHVR': 0,    # Shaver traders start with $0
     'ZIC': 0,     # Zero Intelligence Constrained start with $0
     'ZIP': 0,     # Zero Intelligence Plus start with $0
-    'LLM': 0,     # LLM traders start with $0
-    'LLM_BG': 0,  # LLM with Belief Graph start with $0
-    'PT1': 500,   # Proprietary traders start with $500
-    'PT2': 500,   # Proprietary traders start with $500
+    'LLM': 500,   # LLM proprietary traders start with $500
+    'BG_NL_COT': 500,     # Belief Graph NL COT proprietary traders start with $500
+    'PG_NL_COT': 500,     # Perfect Graph NL COT proprietary traders start with $500
+    'GV1_NL_COT': 500,    # Giveaway v1 NL COT proprietary traders start with $500
+    'GV2_NL_COT': 500,    # Giveaway v2 NL COT proprietary traders start with $500
+    'GV3_NL_COT': 500,    # Giveaway v3 NL COT proprietary traders start with $500
+    'HM_NL_COT': 500,     # Human Model NL COT proprietary traders start with $500
 }
 
 def analyze_avg_balance(filename):
@@ -285,33 +288,70 @@ def analyze_tape(filename):
     
     return transactions
 
+def find_latest_files():
+    """Find the most recent BSE output files"""
+    import glob
+    import os
+    import sys
+
+    # Find all avg_balance files
+    balance_files = glob.glob("bse_*_avg_balance.csv")
+    tape_files = glob.glob("bse_*_tape.csv")
+
+    if not balance_files and not tape_files:
+        return None, None
+
+    # Sort by modification time, newest first
+    balance_file = sorted(balance_files, key=lambda x: os.path.getmtime(x), reverse=True)[0] if balance_files else None
+    tape_file = sorted(tape_files, key=lambda x: os.path.getmtime(x), reverse=True)[0] if tape_files else None
+
+    return balance_file, tape_file
+
 def main():
     """Main analysis function"""
-    # Analyze the files from our simulation
-    balance_file = "bse_d000_i10_0001_avg_balance.csv"
-    tape_file = "bse_d000_i10_0001_tape.csv"
+    import sys
+
+    # Check for command line arguments
+    if len(sys.argv) > 2:
+        balance_file = sys.argv[1]
+        tape_file = sys.argv[2]
+    else:
+        # Auto-detect latest files
+        balance_file, tape_file = find_latest_files()
+        if balance_file is None and tape_file is None:
+            print("No BSE output files found!")
+            print("Run the BSE simulation first to generate data.")
+            return
+        if balance_file:
+            print(f"Using most recent balance file: {balance_file}")
+        if tape_file:
+            print(f"Using most recent tape file: {tape_file}")
     
     try:
         # Analyze performance data
-        performance = analyze_avg_balance(balance_file)
-        
-        # Print focused summary
-        print_performance_summary(performance)
-        
-        # Create focused visualizations
-        plot_key_metrics(performance)
-        
+        if balance_file:
+            performance = analyze_avg_balance(balance_file)
+
+            if not performance:
+                print("No performance data found in balance file!")
+            else:
+                # Print focused summary
+                print_performance_summary(performance)
+
+                # Create focused visualizations
+                plot_key_metrics(performance)
+                print(f"\nAnalysis complete! Key metrics visualization saved as 'key_performance_metrics.png'")
+
         # Analyze transaction data
-        transactions = analyze_tape(tape_file)
-        print(f"\nTotal Transactions: {len(transactions):,}")
-        
-        if transactions:
-            prices = [t['price'] for t in transactions]
-            print(f"Price Range: ${min(prices):,} - ${max(prices):,}")
-            print(f"Average Price: ${np.mean(prices):,.2f}")
-            print(f"Price Volatility: ${np.std(prices):,.2f}")
-        
-        print(f"\nAnalysis complete! Key metrics visualization saved as 'key_performance_metrics.png'")
+        if tape_file:
+            transactions = analyze_tape(tape_file)
+            print(f"\nTotal Transactions: {len(transactions):,}")
+
+            if transactions:
+                prices = [t['price'] for t in transactions]
+                print(f"Price Range: ${min(prices):,} - ${max(prices):,}")
+                print(f"Average Price: ${np.mean(prices):,.2f}")
+                print(f"Price Volatility: ${np.std(prices):,.2f}")
         
     except FileNotFoundError as e:
         print(f"Error: Could not find file {e.filename}")

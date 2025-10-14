@@ -9697,6 +9697,39 @@ def calculate_prop_trader_net_worth(traders, lob=None):
     return net_worths
 
 
+def cleanup_old_analysis_files():
+    """Clean up old CSV and plot files from previous runs"""
+    import glob
+    import os
+
+    # Use simpler wildcard pattern to match ALL bse files
+    patterns = [
+        'bse_*.csv',
+        'bse_*.png',
+        'key_performance_metrics.png',
+        'custom_attributes_analysis.json'
+    ]
+
+    removed_count = 0
+    removed_files = []
+
+    for pattern in patterns:
+        files = glob.glob(pattern)
+        for filepath in files:
+            try:
+                os.remove(filepath)
+                removed_count += 1
+                removed_files.append(filepath)
+            except Exception as e:
+                print(f"⚠️  Warning: Could not remove {filepath}: {e}")
+
+    if removed_count > 0:
+        print(f"🧹 Cleaned up {removed_count} old file(s) from previous runs")
+        if removed_count <= 15:  # Only show details if not too many files
+            for f in removed_files:
+                print(f"   - {f}")
+
+
 def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dumpfile_flags, sess_vrbs):
     """
     One session in the market.
@@ -9709,6 +9742,9 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     :param sess_vrbs: verbosity: if True, output a running commentary on what is going on; if False, stay silent.
     :return: <nothing>.
     """
+
+    # Clean up old analysis files from previous runs
+    cleanup_old_analysis_files()
 
     # Reset shutdown flag for this session
     global shutdown_requested
@@ -9827,11 +9863,16 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
         tape_dump = None
     
     # Initialize proprietary trader net worth tracking
-    prop_net_worth_file = open(sess_id + '_prop_net_worths.csv', 'w')
+    csv_filename = sess_id + '_prop_net_worths.csv'
+    print(f"\n📊 Creating CSV file: {csv_filename}")
+    print(f"📊 CSV Headers: {PROP_TRADER_CSV_HEADERS}")
+    prop_net_worth_file = open(csv_filename, 'w', buffering=1)  # Line buffering
     prop_net_worth_writer = csv.writer(prop_net_worth_file)
     # prop_net_worth_writer.writerow(['Timestamp', 'PT1_NetWorth', 'PT2_NetWorth', 'LLM_NetWorth', 'BG_NetWorth', 'BGNO_NetWorth', 'PGCO_NetWorth', 'PGNO_NetWorth', 'GV1_NetWorth', 'GV2_NetWorth'])
 
     prop_net_worth_writer.writerow(PROP_TRADER_CSV_HEADERS)
+    prop_net_worth_file.flush()  # Ensure headers are written immediately
+    print(f"📊 CSV headers written and flushed")
         
     # initialise the exchange
     exchange = Exchange()
@@ -9870,6 +9911,13 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
         # Check for graceful shutdown
         if shutdown_requested:
             print("Gracefully ending session and saving all data...")
+            # Write final snapshot of net worths before exiting
+            lob = exchange.publish_lob(time, lobframes, lob_verbose)
+            net_worths = calculate_prop_trader_net_worth(traders, lob)
+            row = [int(time)] + [net_worths.get(ttype, 500) for ttype in PROP_TRADER_TYPES]
+            prop_net_worth_writer.writerow(row)
+            prop_net_worth_file.flush()
+            print(f"📊 Final snapshot written to CSV at time {int(time)}")
             break
 
         time_left = (endtime - time) / session_duration
@@ -9921,6 +9969,9 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
                 net_worths = calculate_prop_trader_net_worth(traders, lob)
                 row = [int(time)] + [net_worths.get(ttype, 500) for ttype in PROP_TRADER_TYPES]
                 prop_net_worth_writer.writerow(row)
+                prop_net_worth_file.flush()  # Flush data immediately for Ctrl+C safety
+                if sess_vrbs:
+                    print(f"📊 Trade data written at time {int(time)}")
 
             # traders respond to whatever happened
             lob = exchange.publish_lob(time, lobframes, lob_verbose)

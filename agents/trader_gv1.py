@@ -94,4 +94,4 @@ class TraderGV1(BaseLLMTrader):
     def respond(self, time, lob, trade, verbose):
         """Update belief graph when market events occur"""
         events_processed = self.process_and_log_market_events(time, lob, trade)
-        self.log_belief_graph_update(time, events_processed)
+        self.log_belief_graph_update(time, events_processed, lob)

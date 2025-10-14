@@ -89,7 +89,6 @@ Current belief graph state:
 {belief_graph_json}
 
 Key elements:
-- "aggressiveness_scores": How aggressive each agent is in their trading (0-1 scale)
 - "strategy_beliefs": What strategies you believe other agents are following
 - "market_sentiment": Overall market direction and momentum
 - "risk_assessment": Current market risk level
