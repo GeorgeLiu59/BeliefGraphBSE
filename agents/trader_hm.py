@@ -35,7 +35,8 @@ class TraderHM(BaseLLMTrader):
         self.hypothesis_scaffold = HypothesisScaffold(
             trader_id=tid,
             model=self.model,
-            logger=self.logger
+            logger=self.logger,
+            belief_graph=self.belief_graph
         )
 
         self.attributes = {
@@ -134,9 +135,22 @@ class TraderHM(BaseLLMTrader):
             self.logger.debug(f"[HM-TRADE] Buyer: {buyer_id}, Seller: {seller_id}, Price: ${trade_price}")
 
             recent_prices = self.extract_recent_prices(lob, n_prices=5)
+            best_bid = lob.get('bids', {}).get('best')
+            best_ask = lob.get('asks', {}).get('best')
+
+            last_trade_price = None
+            if lob.get('tape') and len(lob['tape']) > 0:
+                for i in range(len(lob['tape']) - 1, -1, -1):
+                    if lob['tape'][i].get('type') == 'Trade':
+                        last_trade_price = lob['tape'][i]['price']
+                        break
+
+            self.logger.info(f"[LOB-DATA-HM] best_bid: {best_bid}, best_ask: {best_ask}, last_trade_price: {last_trade_price}")
+
             market_context = {
-                'best_bid': lob.get('bids', {}).get('best', 'N/A'),
-                'best_ask': lob.get('asks', {}).get('best', 'N/A'),
+                'best_bid': best_bid,
+                'best_ask': best_ask,
+                'last_trade_price': last_trade_price,
                 'recent_prices': recent_prices
             }
 
@@ -158,7 +172,13 @@ class TraderHM(BaseLLMTrader):
                 self.belief_graph.update_beliefs(event)
                 events_processed += 1
 
-                action_data = {'price': trade_price, 'time': time}
+                action_data = {
+                    'price': trade_price,
+                    'time': time,
+                    'event_type': 'trade',
+                    'quantity': 1,
+                    'opponent_id': buyer_id
+                }
                 self.hypothesis_scaffold.observe_opponent_action(buyer_id, action_data, market_context)
 
             if seller_id != self.tid:
@@ -178,11 +198,23 @@ class TraderHM(BaseLLMTrader):
                 self.belief_graph.update_beliefs(event)
                 events_processed += 1
 
-                action_data = {'price': trade_price, 'time': time}
+                action_data = {
+                    'price': trade_price,
+                    'time': time,
+                    'event_type': 'trade',
+                    'quantity': 1,
+                    'opponent_id': seller_id
+                }
                 self.hypothesis_scaffold.observe_opponent_action(seller_id, action_data, market_context)
 
             if opponent_trader_id:
-                actual_action = {'price': trade_price, 'time': time}
+                actual_action = {
+                    'price': trade_price,
+                    'time': time,
+                    'event_type': 'trade',
+                    'quantity': 1,
+                    'opponent_id': opponent_trader_id
+                }
                 try:
                     asyncio.get_running_loop()
                     self.logger.info(f"[HYP-SKIP] {self.tid}: Skipping async evaluation (in event loop)")

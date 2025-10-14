@@ -251,10 +251,25 @@ class BaseLLMTrader(Trader):
 
         # Update asset node with current LOB state FIRST
         if hasattr(self.belief_graph, 'asset_node'):
+            self.logger.info(f"[LOB-ACCESS] {self.tid}: Retrieving market state from LOB at time {time:.1f}")
+
             if lob['bids']['n'] > 0:
                 self.belief_graph.asset_node.current_best_bid = lob['bids']['best']
+                self.logger.info(f"[LOB-DATA] best_bid from LOB: {lob['bids']['best']}")
+
             if lob['asks']['n'] > 0:
                 self.belief_graph.asset_node.current_best_ask = lob['asks']['best']
+                self.logger.info(f"[LOB-DATA] best_ask from LOB: {lob['asks']['best']}")
+
+            if lob.get('tape') and len(lob['tape']) > 0:
+                last_trade_event = None
+                for i in range(len(lob['tape']) - 1, -1, -1):
+                    if lob['tape'][i].get('type') == 'Trade':
+                        last_trade_event = lob['tape'][i]
+                        break
+                if last_trade_event:
+                    self.belief_graph.asset_node.last_trade_price = last_trade_event['price']
+                    self.logger.info(f"[LOB-DATA] last_trade_price from LOB tape: {last_trade_event['price']} (tape length: {len(lob['tape'])})")
 
         events_processed = 0
 

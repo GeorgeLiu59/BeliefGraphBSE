@@ -356,21 +356,21 @@ Respond with ONLY a JSON object with your ADAPTED ATTRIBUTES (include only the a
 
         # Format agent history
         total_trades = agent_history.get('total_trades', 0)
-        last_bid = agent_history.get('last_bid_price', 'None')
-        last_ask = agent_history.get('last_ask_price', 'None')
-        last_trade = agent_history.get('last_trade_price', 'None')
+        last_bid = agent_history.get('last_bid_price') or 'None'
+        last_ask = agent_history.get('last_ask_price') or 'None'
+        last_trade = agent_history.get('last_trade_price') or 'None'
         recent_events = agent_history.get('recent_events', [])
 
         recent_events_str = "\n".join([
-            f"  - {e['event_type']} at price {e['price']} (qty: {e['quantity']})"
+            f"  - {e.get('event_type', 'unknown')} at price {e.get('price', 'N/A')} (qty: {e.get('quantity', 1)})"
             for e in recent_events[-5:]
         ]) if recent_events else "  No recent events"
 
         # Format market state
-        best_bid = market_state.get('current_best_bid', 'N/A')
-        best_ask = market_state.get('current_best_ask', 'N/A')
-        last_mkt_trade = market_state.get('last_trade_price', 'N/A')
-        spread = market_state.get('spread_width', 'N/A')
+        best_bid = market_state.get('current_best_bid') or 'N/A'
+        best_ask = market_state.get('current_best_ask') or 'N/A'
+        last_mkt_trade = market_state.get('last_trade_price') or 'N/A'
+        spread = market_state.get('spread_width') or 'N/A'
 
         # Format current beliefs - show existing trait names
         if current_beliefs:
@@ -443,20 +443,20 @@ Respond with ONLY a JSON object with YOUR CHOSEN TRAITS (3-7 traits):
         event_qty = event.quantity if event.quantity else 1
 
         total_trades = agent_history.get('total_trades', 0)
-        last_bid = agent_history.get('last_bid_price', 'None')
-        last_ask = agent_history.get('last_ask_price', 'None')
-        last_trade = agent_history.get('last_trade_price', 'None')
+        last_bid = agent_history.get('last_bid_price') or 'None'
+        last_ask = agent_history.get('last_ask_price') or 'None'
+        last_trade = agent_history.get('last_trade_price') or 'None'
         recent_events = agent_history.get('recent_events', [])
 
         recent_events_str = "\n".join([
-            f"  - {e['event_type']} at price {e['price']} (qty: {e['quantity']})"
+            f"  - {e.get('event_type', 'unknown')} at price {e.get('price', 'N/A')} (qty: {e.get('quantity', 1)})"
             for e in recent_events[-5:]
         ]) if recent_events else "  No recent events"
 
-        best_bid = market_state.get('current_best_bid', 'N/A')
-        best_ask = market_state.get('current_best_ask', 'N/A')
-        last_mkt_trade = market_state.get('last_trade_price', 'N/A')
-        spread = market_state.get('spread_width', 'N/A')
+        best_bid = market_state.get('current_best_bid') or 'N/A'
+        best_ask = market_state.get('current_best_ask') or 'N/A'
+        last_mkt_trade = market_state.get('last_trade_price') or 'N/A'
+        spread = market_state.get('spread_width') or 'N/A'
 
         if current_beliefs:
             belief_display = "\n".join([
@@ -532,20 +532,20 @@ Respond with ONLY a JSON object with discrete sets:
         event_qty = event.quantity if event.quantity else 1
 
         total_trades = agent_history.get('total_trades', 0)
-        last_bid = agent_history.get('last_bid_price', 'None')
-        last_ask = agent_history.get('last_ask_price', 'None')
-        last_trade = agent_history.get('last_trade_price', 'None')
+        last_bid = agent_history.get('last_bid_price') or 'None'
+        last_ask = agent_history.get('last_ask_price') or 'None'
+        last_trade = agent_history.get('last_trade_price') or 'None'
         recent_events = agent_history.get('recent_events', [])
 
         recent_events_str = "\n".join([
-            f"  - {e['event_type']} at price {e['price']} (qty: {e['quantity']})"
+            f"  - {e.get('event_type', 'unknown')} at price {e.get('price', 'N/A')} (qty: {e.get('quantity', 1)})"
             for e in recent_events[-5:]
         ]) if recent_events else "  No recent events"
 
-        best_bid = market_state.get('current_best_bid', 'N/A')
-        best_ask = market_state.get('current_best_ask', 'N/A')
-        last_mkt_trade = market_state.get('last_trade_price', 'N/A')
-        spread = market_state.get('spread_width', 'N/A')
+        best_bid = market_state.get('current_best_bid') or 'N/A'
+        best_ask = market_state.get('current_best_ask') or 'N/A'
+        last_mkt_trade = market_state.get('last_trade_price') or 'N/A'
+        spread = market_state.get('spread_width') or 'N/A'
 
         if current_beliefs:
             belief_display = "\n".join([
