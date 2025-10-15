@@ -50,7 +50,7 @@ class BaseLLMTrader(Trader):
         self.max_history = 50
 
         self.last_belief_update_time = 0.0
-        self.belief_update_interval = 3.0  # adjust this if LLM is not trading
+        self.belief_update_interval = 3
 
         self.logger = self._setup_logger(ttype, tid)
 

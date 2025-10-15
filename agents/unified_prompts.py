@@ -258,27 +258,28 @@ CURRENT MARKET CONDITIONS:
 """
 
         return f"""
-You are a trading agent designing your own trading personality through emergent attribute discovery.
+You are a trading agent designing your own trading strategy through emergent parameter discovery.
 {market_conditions}
 TASK:
-Create 4-8 trading attributes that define your personality based on the market conditions above.
+Create 4-8 strategy parameters that define YOUR OWN trading approach based on the market conditions above.
 
-ATTRIBUTE DESIGN RULES:
-1. Create attribute names that describe behavioral dimensions you think are important for trading
-2. Each attribute is scored 0.0-1.0
-3. Attribute names should be descriptive and specific to trading behavior
-4. Consider what behaviors would help you succeed in the current market conditions
-5. Think about how you want to respond to different market situations
-6. Design attributes that capture nuanced trading personality traits
-7. Focus on behaviors that would distinguish you from other traders
+These are YOUR internal decision-making parameters, NOT beliefs about others.
 
-Respond with ONLY a JSON object with YOUR CHOSEN ATTRIBUTES (4-8 attributes):
+PARAMETER DESIGN RULES:
+1. Create parameter names that describe dimensions of YOUR decision-making
+2. Values are not limited to 0-1, use whatever numeric range makes sense
+3. Consider what decision rules would help you succeed in current market conditions
+4. Think about how you want to respond to different market situations
+5. Design parameters that capture YOUR strategic preferences
+6. Focus on internal decision criteria, not observations about others
+
+Respond with ONLY a JSON object with YOUR STRATEGY PARAMETERS (4-8 parameters):
 {{
-  "attribute_name_1": 0.X,
-  "attribute_name_2": 0.X,
-  "attribute_name_3": 0.X,
-  "attribute_name_4": 0.X,
-  "reasoning": "Brief explanation of what personality you're creating and why these attributes matter"
+  "parameter_name_1": value,
+  "parameter_name_2": value,
+  "parameter_name_3": value,
+  "parameter_name_4": value,
+  "reasoning": "Brief explanation of your strategy and why these parameters matter"
 }}
 """
 
@@ -304,9 +305,9 @@ MARKET CONDITIONS:
 """
 
         return f"""
-Your current trading attributes need adaptation based on performance feedback.
+Your current strategy parameters need adaptation based on performance feedback.
 
-CURRENT ATTRIBUTES:
+CURRENT PARAMETERS:
 {attr_display}
 
 PERFORMANCE METRICS:
@@ -315,26 +316,28 @@ PERFORMANCE METRICS:
 - Number of trades: {performance_metrics['trade_count']}
 {market_conditions}
 TASK:
-Analyze your performance and adapt your trading personality through emergent attribute modification.
+Analyze your performance and adapt YOUR OWN strategy parameters.
+
+These are YOUR internal decision rules, NOT beliefs about others.
 
 ADAPTATION RULES:
-1. You can modify existing attribute values (0.0-1.0 scale)
-2. You can create NEW attributes if you identify missing behavioral dimensions
-3. You can remove attributes that aren't helping (by not including them in response)
-4. Consider what behavioral changes would improve your performance
+1. You can modify existing parameter values (any numeric range)
+2. You can create NEW parameters if you identify missing decision dimensions
+3. You can remove parameters that aren't helping (by not including them in response)
+4. Consider what strategic changes would improve YOUR performance
 5. Base changes on concrete performance feedback
 
 ANALYZE:
-- What behaviors led to losses or missed opportunities?
+- What decision rules led to losses or missed opportunities?
 - What market conditions did you misread?
-- What attributes need strengthening or weakening?
-- Are there new behavioral dimensions you need to add?
+- What parameters need adjustment?
+- Are there new decision dimensions you need to add?
 
-Respond with ONLY a JSON object with your ADAPTED ATTRIBUTES (include only the attributes you want to keep/modify/add):
+Respond with ONLY a JSON object with your ADAPTED PARAMETERS (include only the parameters you want to keep/modify/add):
 {{
-  "attribute_name_1": 0.X,
-  "attribute_name_2": 0.X,
-  "attribute_name_3": 0.X,
+  "parameter_name_1": value,
+  "parameter_name_2": value,
+  "parameter_name_3": value,
   "reasoning": "Brief explanation of what changes you made and why they should improve performance"
 }}
 """
@@ -358,7 +361,6 @@ Respond with ONLY a JSON object with your ADAPTED ATTRIBUTES (include only the a
         total_trades = agent_history.get('total_trades', 0)
         last_bid = agent_history.get('last_bid_price') or 'None'
         last_ask = agent_history.get('last_ask_price') or 'None'
-        last_trade = agent_history.get('last_trade_price') or 'None'
         recent_events = agent_history.get('recent_events', [])
 
         recent_events_str = "\n".join([
@@ -382,7 +384,7 @@ Respond with ONLY a JSON object with your ADAPTED ATTRIBUTES (include only the a
             belief_display = "No traits identified yet."
 
         return f"""
-You are observing another trader's behavior to infer their personality through emergent trait discovery.
+You are forming beliefs about what another trader THINKS and INTENDS through Theory of Mind reasoning.
 
 CURRENT EVENT:
 Agent {agent_id} just performed: {event_type} at price {event_price} (quantity: {event_qty})
@@ -391,7 +393,6 @@ AGENT'S TRADING HISTORY:
 - Total trades completed: {total_trades}
 - Last bid price: {last_bid}
 - Last ask price: {last_ask}
-- Last trade price: {last_trade}
 - Recent activity:
 {recent_events_str}
 
@@ -401,30 +402,28 @@ CURRENT MARKET STATE:
 - Last market trade price: {last_mkt_trade}
 - Bid-ask spread: {spread}
 
-EXISTING TRAITS YOU'VE IDENTIFIED:
+YOUR EXISTING BELIEFS ABOUT THIS AGENT:
 {belief_display}
 
 TASK:
-Based on what you observe, define 3-7 personality traits that capture this trader's behavior.
+Infer what this agent BELIEVES about the market and what they INTEND to do. These are YOUR BELIEFS about THEIR mental state.
 
-TRAIT GENERATION RULES:
-1. Create trait names that describe observable behaviors
-2. Each trait is scored 0.0-1.0
-3. You can update existing traits or create new ones
-4. Trait names should be descriptive and specific to what you observe
-5. Only include traits you can actually infer from observations
-6. Focus on patterns that distinguish this trader from others
-7. Name traits based on actual behavior, not theoretical constructs
+BELIEF INFERENCE RULES:
+1. Create belief dimensions that capture what THEY think, not what you think
+2. CRITICAL: All dimension values MUST be NUMBERS (int or float) - NO strings
+3. You can update existing belief dimensions or create new ones
+4. Only infer beliefs you have evidence for from their actions
+5. Focus on beliefs that would explain their trading decisions
+6. Name dimensions based on what you're inferring about THEIR mind, not their behavior
 
-Update existing traits or create new ones based on this observation.
+Update your beliefs about what this agent thinks/intends.
 
-Respond with ONLY a JSON object with YOUR CHOSEN TRAITS (3-7 traits):
+Respond with ONLY a JSON object where ALL dimension values are NUMERIC:
 {{
-  "trait_name_1": 0.X,
-  "trait_name_2": 0.X,
-  "trait_name_3": 0.X,
+  "dimension_name": numeric_value,
+  "another_dimension": numeric_value,
   "confidence": 0.X,
-  "reasoning": "Brief explanation of what patterns you observed and which traits you identified"
+  "reasoning": "Brief explanation"
 }}
 """
 
@@ -476,7 +475,6 @@ AGENT'S TRADING HISTORY:
 - Total trades completed: {total_trades}
 - Last bid price: {last_bid}
 - Last ask price: {last_ask}
-- Last trade price: {last_trade}
 - Recent activity:
 {recent_events_str}
 
@@ -565,7 +563,6 @@ AGENT'S TRADING HISTORY:
 - Total trades completed: {total_trades}
 - Last bid price: {last_bid}
 - Last ask price: {last_ask}
-- Last trade price: {last_trade}
 - Recent activity:
 {recent_events_str}
 
@@ -871,18 +868,17 @@ class PromptParser:
         json_str = PromptParser._extract_json_from_response(response)
         data = json.loads(json_str)
 
-        # Extract all traits
         traits = {}
         for key, value in data.items():
+            if value is None:
+                continue
             key_lower = key.lower()
             if key_lower in ['reasoning', 'confidence']:
                 traits[key_lower] = value
             else:
                 if not isinstance(value, (int, float)):
                     raise ValueError(f"Trait '{key}' must have numeric value, got: {type(value).__name__} - '{str(value)[:100]}'")
-                trait_value = float(value)
-                trait_value = max(0.0, min(1.0, trait_value))
-                traits[key] = trait_value
+                traits[key] = float(value)
 
         return traits
 

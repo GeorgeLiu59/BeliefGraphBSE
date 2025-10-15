@@ -9263,11 +9263,10 @@ def populate_market(trdrs_spec, traders, shuffle, vrbs):
         balance_type = trader_config['balance_type']
         default_params = trader_config['params']
         
-        # Set balance based on trader type
         if balance_type == 'prop':
-            balance = 500  # Proprietary traders start with $500
+            balance = 5000
         else:
-            balance = 0.00  # Standard traders start with $0
+            balance = 0.00
             
         time0 = 0
         
@@ -10106,13 +10105,9 @@ ACTIVE_BUYERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]
 ACTIVE_SELLERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]  # Usually same as buyers
 ACTIVE_PROPTRADERS = [
     ('LLM', 1),
-    ('BG_NL_COT', 1),
-    ('PG_NL_COT', 1),
-    ('GV1_NL_COT', 1),
     ('GV2_NL_COT', 1),
     ('GV3_NL_COT', 1),
-    ('HM_NL_COT', 1),
-]  # 7 LLM agents (1 baseline + 6 belief graph types, all NL_COT)
+]
 
 # Automatically generate lists of proprietary trader types for filtering
 PROP_TRADER_TYPES = [ttype for ttype, count in ACTIVE_PROPTRADERS]
@@ -10325,8 +10320,7 @@ if __name__ == "__main__":
     range2 = (125, 90, (schedule_offsetfn_from_eventlist, [[end_time, offsetfn_events]]))
     demand_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range2], 'stepmode': 'random'}]
 
-    # new customer orders arrive at each trader approx once every order_interval seconds
-    order_interval = 10
+    order_interval = 2
 
     # order schedule wraps up the supply/demand schedules and details of how customer orders/assignments are issued
     order_sched = {'sup': supply_schedule, 'dem': demand_schedule,

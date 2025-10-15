@@ -103,14 +103,13 @@ class AgentNode:
     node_type: NodeType = NodeType.AGENT
     last_bid_price: Optional[float] = None
     last_ask_price: Optional[float] = None
-    last_trade_price: Optional[float] = None
     total_trades: int = 0
     total_volume: int = 0
     strategy_type: Optional[str] = None
     inferred_valuation: Optional[float] = None
     valuation_confidence: float = 0.0
     last_activity: float = 0.0
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization"""
         return {
@@ -118,7 +117,6 @@ class AgentNode:
             'node_type': self.node_type.value,
             'last_bid_price': self.last_bid_price,
             'last_ask_price': self.last_ask_price,
-            'last_trade_price': self.last_trade_price,
             'total_trades': self.total_trades,
             'total_volume': self.total_volume,
             'strategy_type': self.strategy_type,
@@ -289,7 +287,6 @@ class BeliefGraph:
         agent_node = self.nodes[event.agent_id]
 
         # Update agent node
-        agent_node.last_trade_price = event.price
         agent_node.total_trades += 1
         agent_node.total_volume += event.quantity or 1
         agent_node.last_activity = event.timestamp
@@ -916,7 +913,6 @@ class GraphVar1:
             'total_volume': agent_node.total_volume,
             'last_bid_price': agent_node.last_bid_price,
             'last_ask_price': agent_node.last_ask_price,
-            'last_trade_price': agent_node.last_trade_price,
             'last_activity': agent_node.last_activity,
             'recent_events': [
                 {
@@ -1075,7 +1071,6 @@ class GraphVar1:
             return
 
         agent_node = self.nodes[event.agent_id]
-        agent_node.last_trade_price = event.price
         agent_node.total_trades += 1
         agent_node.total_volume += event.quantity or 1
         agent_node.last_activity = event.timestamp
@@ -1735,7 +1730,6 @@ class GraphVar2:
             'total_volume': agent_node.total_volume,
             'last_bid_price': agent_node.last_bid_price,
             'last_ask_price': agent_node.last_ask_price,
-            'last_trade_price': agent_node.last_trade_price,
             'last_activity': agent_node.last_activity,
             'recent_events': [
                 {
@@ -1865,7 +1859,6 @@ class GraphVar2:
             return
 
         agent_node = self.nodes[event.agent_id]
-        agent_node.last_trade_price = event.price
         agent_node.total_trades += 1
         agent_node.total_volume += event.quantity or 1
         agent_node.last_activity = event.timestamp
@@ -2805,7 +2798,6 @@ class PerfectBeliefGraph:
             return
             
         agent_node = self.nodes[event.agent_id]
-        agent_node.last_trade_price = event.price
         agent_node.total_trades += 1
         agent_node.total_volume += event.quantity or 1
         agent_node.last_activity = event.timestamp
@@ -3227,7 +3219,6 @@ class GraphVar3:
             return
 
         agent_node = self.nodes[event.agent_id]
-        agent_node.last_trade_price = event.price
         agent_node.total_trades += 1
         agent_node.total_volume += event.quantity or 1
         agent_node.last_activity = event.timestamp
@@ -3287,7 +3278,6 @@ class GraphVar3:
             'total_volume': agent_node.total_volume,
             'last_bid_price': agent_node.last_bid_price,
             'last_ask_price': agent_node.last_ask_price,
-            'last_trade_price': agent_node.last_trade_price,
             'last_activity': agent_node.last_activity,
             'recent_events': [
                 {
@@ -3460,10 +3450,10 @@ class GraphVar3:
 
         # Update all traits from dict (allows emergent trait names)
         for key, value in traits_dict.items():
-            if key in ['reasoning']:  # Store reasoning as-is
+            if key in ['reasoning']:
                 self.belief_traits[agent_id][key] = value
-            elif isinstance(value, (int, float)):  # Clamp numeric traits to [0, 1]
-                self.belief_traits[agent_id][key] = max(0.0, min(1.0, value))
+            elif isinstance(value, (int, float)):
+                self.belief_traits[agent_id][key] = value
 
         # Synchronize edges with belief traits
         import uuid

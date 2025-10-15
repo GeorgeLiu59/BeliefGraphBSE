@@ -243,7 +243,6 @@ class HypothesisScaffold:
                 'total_trades': 0,
                 'last_bid_price': None,
                 'last_ask_price': None,
-                'last_trade_price': None,
                 'recent_events': []
             }
 
@@ -257,7 +256,6 @@ class HypothesisScaffold:
             'total_trades': agent_node.total_trades,
             'last_bid_price': agent_node.last_bid_price,
             'last_ask_price': agent_node.last_ask_price,
-            'last_trade_price': agent_node.last_trade_price,
             'recent_events': recent_events
         }
 
@@ -272,7 +270,6 @@ class HypothesisScaffold:
         total_trades = agent_history.get('total_trades', 0)
         last_bid = agent_history.get('last_bid_price') or 'None'
         last_ask = agent_history.get('last_ask_price') or 'None'
-        last_trade = agent_history.get('last_trade_price') or 'None'
         recent_events = agent_history.get('recent_events', [])
 
         recent_events_str = "\n".join([
@@ -298,7 +295,6 @@ AGENT'S TRADING HISTORY:
 - Total trades completed: {total_trades}
 - Last bid price: {last_bid}
 - Last ask price: {last_ask}
-- Last trade price: {last_trade}
 - Recent activity:
 {recent_events_str}
 
@@ -327,7 +323,6 @@ Respond with a concise strategy description (50-100 words):"""
         total_trades = agent_history.get('total_trades', 0)
         last_bid = agent_history.get('last_bid_price') or 'None'
         last_ask = agent_history.get('last_ask_price') or 'None'
-        last_trade = agent_history.get('last_trade_price') or 'None'
         recent_events = agent_history.get('recent_events', [])
 
         recent_events_str = "\n".join([
@@ -355,7 +350,6 @@ AGENT'S TRADING HISTORY:
 - Total trades completed: {total_trades}
 - Last bid price: {last_bid}
 - Last ask price: {last_ask}
-- Last trade price: {last_trade}
 - Recent activity:
 {recent_events_str}
 
