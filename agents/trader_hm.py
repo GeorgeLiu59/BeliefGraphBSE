@@ -56,8 +56,11 @@ class TraderHM(BaseLLMTrader):
 
     def get_belief_data(self) -> str:
         """Get belief graph data in configured format"""
+        self.logger.info(f"[HM-BELIEF-DATA] Getting belief data, format={self.belief_format}")
+
         if self.belief_format == 'json':
             good_hypos = self.hypothesis_scaffold.get_good_hypotheses_data()
+            self.logger.info(f"[HM-BELIEF-DATA] Good hypotheses count: {len(good_hypos)}")
 
             beliefs = {
                 'tracked_agents': [str(aid) for aid in self.belief_graph.agents if aid != self.tid],
@@ -67,6 +70,7 @@ class TraderHM(BaseLLMTrader):
                 'market_sentiment': 'active',
                 'my_attributes': self.attributes
             }
+            self.logger.info(f"[HM-BELIEF-DATA] Total opponent hypotheses: {len(self.hypothesis_scaffold.opponent_hypotheses)}")
             return json.dumps(beliefs, indent=2)
         else:
             narrative_parts = [f"My trading attributes: {self.attributes}"]
@@ -74,13 +78,18 @@ class TraderHM(BaseLLMTrader):
             hypothesis_context = self.hypothesis_scaffold.get_good_hypotheses_context()
             if hypothesis_context:
                 narrative_parts.append(hypothesis_context)
+                self.logger.info(f"[HM-BELIEF-DATA] Hypothesis context added: {len(hypothesis_context)} chars")
+            else:
+                self.logger.info(f"[HM-BELIEF-DATA] No hypothesis context available")
 
             narrative_parts.append(f"\nTracking {len(self.belief_graph.agents)} agents")
             for agent_id in self.belief_graph.agents:
                 if agent_id != self.tid:
                     narrative_parts.append(f"  - Agent {agent_id}")
 
-            return "\n".join(narrative_parts) if narrative_parts else "No agents observed yet."
+            result = "\n".join(narrative_parts) if narrative_parts else "No agents observed yet."
+            self.logger.info(f"[HM-BELIEF-DATA] Returning NL belief data: {len(result)} chars")
+            return result
 
     def getorder(self, time, countdown, lob, p_eq=None, q_eq=None, demand_curve=None, supply_curve=None):
         try:
@@ -126,111 +135,146 @@ class TraderHM(BaseLLMTrader):
         """Update belief graph and evaluate hypotheses - WITH THROTTLE"""
         from .belief_graph import MarketEvent, EventType
 
-        # THROTTLE CHECK - same as other agents
+        self.logger.info(f"[HM-RESPOND-ENTRY] {self.tid}: respond() called at time {time:.1f}")
+
         if (time - self.last_belief_update_time) < self.belief_update_interval:
+            self.logger.info(f"[HM-RESPOND-THROTTLED] {self.tid}: Skipping (last update: {self.last_belief_update_time:.1f}, interval: {self.belief_update_interval})")
             return
 
         self.last_belief_update_time = time
         self.logger.info(f"[BELIEF-THROTTLE] {self.tid}: Running belief graph update at time {time:.1f}")
 
-        self.logger.debug(f"[HM-RESPOND] Called at time {time:.1f}")
         events_processed = 0
+        recent_prices = self.extract_recent_prices(lob, n_prices=5)
+        best_bid = lob.get('bids', {}).get('best')
+        best_ask = lob.get('asks', {}).get('best')
 
-        if trade and 'party1' in trade and 'party2' in trade:
-            buyer_id = trade['party1']
-            seller_id = trade['party2']
-            trade_price = trade['price']
+        last_trade_price = None
+        if lob.get('tape') and len(lob['tape']) > 0:
+            for i in range(len(lob['tape']) - 1, -1, -1):
+                if lob['tape'][i].get('type') == 'Trade':
+                    last_trade_price = lob['tape'][i]['price']
+                    break
 
-            self.logger.debug(f"[HM-TRADE] Buyer: {buyer_id}, Seller: {seller_id}, Price: ${trade_price}")
+        market_context = {
+            'best_bid': best_bid,
+            'best_ask': best_ask,
+            'last_trade_price': last_trade_price,
+            'recent_prices': recent_prices
+        }
 
-            recent_prices = self.extract_recent_prices(lob, n_prices=5)
-            best_bid = lob.get('bids', {}).get('best')
-            best_ask = lob.get('asks', {}).get('best')
+        if lob.get('tape') and len(lob['tape']) > 0:
+            tape_length = len(lob['tape'])
+            new_entries_start = self.last_processed_tape_index
+            self.logger.info(f"[TAPE-SCAN-HM] Tape has {tape_length} entries, processing from index {new_entries_start}")
 
-            last_trade_price = None
-            if lob.get('tape') and len(lob['tape']) > 0:
-                for i in range(len(lob['tape']) - 1, -1, -1):
-                    if lob['tape'][i].get('type') == 'Trade':
-                        last_trade_price = lob['tape'][i]['price']
-                        break
+            for i in range(new_entries_start, tape_length):
+                tape_entry = lob['tape'][i]
+                if tape_entry.get('type') == 'Trade':
+                    buyer_id = tape_entry['party1']
+                    seller_id = tape_entry['party2']
+                    trade_price = tape_entry['price']
+                    trade_time = tape_entry['time']
 
-            self.logger.info(f"[LOB-DATA-HM] best_bid: {best_bid}, best_ask: {best_ask}, last_trade_price: {last_trade_price}")
+                    self.logger.info(f"[HM-TRADE] Buyer: {buyer_id}, Seller: {seller_id}, Price: ${trade_price}")
 
-            market_context = {
-                'best_bid': best_bid,
-                'best_ask': best_ask,
-                'last_trade_price': last_trade_price,
-                'recent_prices': recent_prices
-            }
+                    buyer_is_prop = self._is_prop_trader(buyer_id)
+                    self.logger.info(f"[HM-PROP-CHECK] Buyer {buyer_id}: is_prop={buyer_is_prop}, is_self={buyer_id == self.tid}")
 
-            opponent_trader_id = None
-            if buyer_id != self.tid:
-                opponent_trader_id = buyer_id
-                event = MarketEvent(
-                    event_id=f"trade_{buyer_id}_{time}",
-                    event_type=EventType.TRADE,
-                    timestamp=time,
-                    agent_id=buyer_id,
-                    price=trade_price,
-                    quantity=1,
-                    counterparty_id=seller_id
-                )
-                if buyer_id not in self.belief_graph.agents:
-                    self.belief_graph.add_agent(buyer_id)
-                    self.logger.info(f"[HM-NEW-AGENT] Added buyer {buyer_id}")
-                self.belief_graph.update_beliefs(event)
-                events_processed += 1
+                    if buyer_id != self.tid and buyer_is_prop:
+                        self.logger.info(f"[HM-PROCESS-BUYER] Processing buyer {buyer_id}")
+                        event = MarketEvent(
+                            event_id=f"trade_{buyer_id}_{trade_time}",
+                            event_type=EventType.TRADE,
+                            timestamp=trade_time,
+                            agent_id=buyer_id,
+                            price=trade_price,
+                            quantity=1,
+                            counterparty_id=seller_id
+                        )
+                        if buyer_id not in self.belief_graph.agents:
+                            self.belief_graph.add_agent(buyer_id)
+                            self.logger.info(f"[HM-NEW-AGENT] Added buyer {buyer_id}, calling observe_opponent_action()")
+                            try:
+                                action_data_for_hyp = {
+                                    'price': trade_price,
+                                    'time': trade_time,
+                                    'event_type': 'trade',
+                                    'quantity': 1,
+                                    'opponent_id': buyer_id
+                                }
+                                self.hypothesis_scaffold.observe_opponent_action(buyer_id, action_data_for_hyp, market_context)
+                                self.logger.info(f"[HM-OBSERVE-COMPLETE] observe_opponent_action() completed for {buyer_id}")
+                            except Exception as e:
+                                self.logger.error(f"[HM-OBSERVE-ERROR] Error observing action for {buyer_id}: {e}", exc_info=True)
+                        self.belief_graph.update_beliefs(event)
+                        events_processed += 1
 
-                action_data = {
-                    'price': trade_price,
-                    'time': time,
-                    'event_type': 'trade',
-                    'quantity': 1,
-                    'opponent_id': buyer_id
-                }
-                self.hypothesis_scaffold.observe_opponent_action(buyer_id, action_data, market_context)
+                        action_data = {
+                            'price': trade_price,
+                            'time': trade_time,
+                            'event_type': 'trade',
+                            'quantity': 1,
+                            'opponent_id': buyer_id
+                        }
+                        self.logger.info(f"[HM-OBSERVE] Calling observe_opponent_action for {buyer_id}")
+                        self.hypothesis_scaffold.observe_opponent_action(buyer_id, action_data, market_context)
+                        self.logger.info(f"[HM-EVAL-START] Calling evaluate_hypotheses for {buyer_id}")
+                        try:
+                            asyncio.run(self.hypothesis_scaffold.evaluate_hypotheses(buyer_id, action_data, market_context))
+                            self.logger.info(f"[HM-EVAL-COMPLETE] evaluate_hypotheses() completed for {buyer_id}")
+                        except Exception as e:
+                            self.logger.error(f"[HM-EVAL-ERROR] Error evaluating hypotheses for {buyer_id}: {e}", exc_info=True)
 
-            if seller_id != self.tid:
-                opponent_trader_id = seller_id
-                event = MarketEvent(
-                    event_id=f"trade_{seller_id}_{time}",
-                    event_type=EventType.TRADE,
-                    timestamp=time,
-                    agent_id=seller_id,
-                    price=trade_price,
-                    quantity=1,
-                    counterparty_id=buyer_id
-                )
-                if seller_id not in self.belief_graph.agents:
-                    self.belief_graph.add_agent(seller_id)
-                    self.logger.info(f"[HM-NEW-AGENT] Added seller {seller_id}")
-                self.belief_graph.update_beliefs(event)
-                events_processed += 1
+                    seller_is_prop = self._is_prop_trader(seller_id)
+                    self.logger.info(f"[HM-PROP-CHECK] Seller {seller_id}: is_prop={seller_is_prop}, is_self={seller_id == self.tid}")
 
-                action_data = {
-                    'price': trade_price,
-                    'time': time,
-                    'event_type': 'trade',
-                    'quantity': 1,
-                    'opponent_id': seller_id
-                }
-                self.hypothesis_scaffold.observe_opponent_action(seller_id, action_data, market_context)
+                    if seller_id != self.tid and seller_is_prop:
+                        self.logger.info(f"[HM-PROCESS-SELLER] Processing seller {seller_id}")
+                        event = MarketEvent(
+                            event_id=f"trade_{seller_id}_{trade_time}",
+                            event_type=EventType.TRADE,
+                            timestamp=trade_time,
+                            agent_id=seller_id,
+                            price=trade_price,
+                            quantity=1,
+                            counterparty_id=buyer_id
+                        )
+                        if seller_id not in self.belief_graph.agents:
+                            self.belief_graph.add_agent(seller_id)
+                            self.logger.info(f"[HM-NEW-AGENT] Added seller {seller_id}, calling observe_opponent_action()")
+                            try:
+                                action_data_for_hyp = {
+                                    'price': trade_price,
+                                    'time': trade_time,
+                                    'event_type': 'trade',
+                                    'quantity': 1,
+                                    'opponent_id': seller_id
+                                }
+                                self.hypothesis_scaffold.observe_opponent_action(seller_id, action_data_for_hyp, market_context)
+                                self.logger.info(f"[HM-OBSERVE-COMPLETE] observe_opponent_action() completed for {seller_id}")
+                            except Exception as e:
+                                self.logger.error(f"[HM-OBSERVE-ERROR] Error observing action for {seller_id}: {e}", exc_info=True)
+                        self.belief_graph.update_beliefs(event)
+                        events_processed += 1
 
-            if opponent_trader_id:
-                actual_action = {
-                    'price': trade_price,
-                    'time': time,
-                    'event_type': 'trade',
-                    'quantity': 1,
-                    'opponent_id': opponent_trader_id
-                }
-                try:
-                    asyncio.get_running_loop()
-                    self.logger.info(f"[HYP-SKIP] {self.tid}: Skipping async evaluation (in event loop)")
-                except RuntimeError:
-                    asyncio.run(self.hypothesis_scaffold.evaluate_hypotheses(
-                        opponent_trader_id, actual_action, market_context
-                    ))
+                        action_data = {
+                            'price': trade_price,
+                            'time': trade_time,
+                            'event_type': 'trade',
+                            'quantity': 1,
+                            'opponent_id': seller_id
+                        }
+                        self.logger.info(f"[HM-OBSERVE] Calling observe_opponent_action for {seller_id}")
+                        self.hypothesis_scaffold.observe_opponent_action(seller_id, action_data, market_context)
+                        self.logger.info(f"[HM-EVAL-START] Calling evaluate_hypotheses for {seller_id}")
+                        try:
+                            asyncio.run(self.hypothesis_scaffold.evaluate_hypotheses(seller_id, action_data, market_context))
+                            self.logger.info(f"[HM-EVAL-COMPLETE] evaluate_hypotheses() completed for {seller_id}")
+                        except Exception as e:
+                            self.logger.error(f"[HM-EVAL-ERROR] Error evaluating hypotheses for {seller_id}: {e}", exc_info=True)
+
+            self.last_processed_tape_index = tape_length
 
         if lob['bids']['n'] > 0:
             for bid in lob['bids']['lob']:
