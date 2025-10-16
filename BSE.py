@@ -9939,56 +9939,51 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
                     # exchange.del_order(time, traders[kill].lastquote, tape_dump, sess_vrbs)
                     exchange.del_order(time, traders[kill].lastquote, None, sess_vrbs)
 
-        # get a limit-order quote (or None) from a randomly chosen trader
-        tid = list(traders.keys())[random.randint(0, len(traders) - 1)]
+        # Batch execution: ALL traders submit orders each round
+        lob = exchange.publish_lob(time, lobframes, lob_verbose)
 
-        order = traders[tid].getorder(time, time_left, exchange.publish_lob(time, lobframes, lob_verbose))
-        if sess_vrbs:
-            print('trader=%s order=%s' % (tid, order))
+        for tid in traders.keys():
+            order = traders[tid].getorder(time, time_left, lob)
+            if sess_vrbs:
+                print('trader=%s order=%s' % (tid, order))
 
-        if order is not None:
-            # Only validate customer traders (buyers/sellers), not proprietary traders
-            if tid[0] != 'P' and len(traders[tid].orders) > 0:
-                if order.otype == 'Ask' and order.price < traders[tid].orders[0].price:
-                    sys.exit('Bad ask')
-                if order.otype == 'Bid' and order.price > traders[tid].orders[0].price:
-                    sys.exit('Bad bid')
-            # send order to exchange
-            traders[tid].n_quotes = 1
-            trade = exchange.process_order(time, order, tape_dump, process_verbose)
-            if trade is not None:
-                # trade occurred,
-                # so the counterparties update order lists and blotters
-                traders[trade['party1']].bookkeep(time, trade, order, bookkeep_verbose)
-                traders[trade['party2']].bookkeep(time, trade, order, bookkeep_verbose)
-                if dumpfile_flags['dump_avgbals']:
-                    trade_stats(sess_id, traders, avg_bals, time, exchange.publish_lob(time, lobframes, lob_verbose))
-                
-                # Record proprietary trader net worths
-                net_worths = calculate_prop_trader_net_worth(traders, lob)
-                row = [int(time)] + [net_worths.get(ttype, 500) for ttype in PROP_TRADER_TYPES]
-                prop_net_worth_writer.writerow(row)
-                prop_net_worth_file.flush()  # Flush data immediately for Ctrl+C safety
-                if sess_vrbs:
-                    print(f"📊 Trade data written at time {int(time)}")
+            if order is not None:
+                # Only validate customer traders (buyers/sellers), not proprietary traders
+                if tid[0] != 'P' and len(traders[tid].orders) > 0:
+                    if order.otype == 'Ask' and order.price < traders[tid].orders[0].price:
+                        sys.exit('Bad ask')
+                    if order.otype == 'Bid' and order.price > traders[tid].orders[0].price:
+                        sys.exit('Bad bid')
+                # send order to exchange
+                traders[tid].n_quotes = 1
+                trade = exchange.process_order(time, order, tape_dump, process_verbose)
+                if trade is not None:
+                    # trade occurred, so counterparties update order lists and blotters
+                    traders[trade['party1']].bookkeep(time, trade, order, bookkeep_verbose)
+                    traders[trade['party2']].bookkeep(time, trade, order, bookkeep_verbose)
+                    if dumpfile_flags['dump_avgbals']:
+                        trade_stats(sess_id, traders, avg_bals, time, exchange.publish_lob(time, lobframes, lob_verbose))
 
-            # traders respond to whatever happened
-            lob = exchange.publish_lob(time, lobframes, lob_verbose)
-            any_record_frame = False
-            for t in traders:
-                # NB respond just updates trader's internal variables
-                # doesn't alter the LOB, so processing each trader in
-                # sequence (rather than random/shuffle) isn't a problem
-                record_frame = traders[t].respond(time, lob, trade, respond_verbose)
-                if record_frame:
-                    any_record_frame = True
+                    # Record proprietary trader net worths
+                    net_worths = calculate_prop_trader_net_worth(traders, lob)
+                    row = [int(time)] + [net_worths.get(ttype, 500) for ttype in PROP_TRADER_TYPES]
+                    prop_net_worth_writer.writerow(row)
+                    prop_net_worth_file.flush()
+                    if sess_vrbs:
+                        print(f"📊 Trade data written at time {int(time)}")
 
-            # log all the PRSH/PRDE/ZIPSH strategy info for this timestep?
-            if any_record_frame and dumpfile_flags['dump_strats']:
-                # print one more frame to strategy dumpfile
-                dump_strats_frame(time, strat_dump, traders)
-                # record that we've written this frame
-                frames_done.add(int(time))
+        # All traders respond to whatever happened this round
+        lob = exchange.publish_lob(time, lobframes, lob_verbose)
+        any_record_frame = False
+        for t in traders:
+            record_frame = traders[t].respond(time, lob, None, respond_verbose)
+            if record_frame:
+                any_record_frame = True
+
+        # log all the PRSH/PRDE/ZIPSH strategy info for this timestep?
+        if any_record_frame and dumpfile_flags['dump_strats']:
+            dump_strats_frame(time, strat_dump, traders)
+            frames_done.add(int(time))
 
         time = time + timestep
 
@@ -10101,12 +10096,16 @@ AVAILABLE_TRADER_TYPES = {
 }
 
 # CONFIGURATION: Edit these to control which traders are included
-ACTIVE_BUYERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]
-ACTIVE_SELLERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]  # Usually same as buyers
+ACTIVE_BUYERS = [('ZIC', 3), ('SHVR', 2)]
+ACTIVE_SELLERS = [('ZIC', 3), ('SHVR', 2)]
 ACTIVE_PROPTRADERS = [
     ('LLM', 1),
+    ('BG_NL_COT', 1),
+    ('PG_NL_COT', 1),
+    ('GV1_NL_COT', 1),
     ('GV2_NL_COT', 1),
     ('GV3_NL_COT', 1),
+    ('HM_NL_COT', 1),
 ]
 
 # Automatically generate lists of proprietary trader types for filtering

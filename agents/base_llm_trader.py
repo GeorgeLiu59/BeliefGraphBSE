@@ -39,10 +39,9 @@ class BaseLLMTrader(Trader):
             self.model = None
             print(f"Warning: No API key for {ttype} trader {tid}")
 
-        self.job = 'Buy'
-        self.last_purchase_price = None
         self.inventory = 0
         self.n_trades = 0
+        self.purchase_prices = []
 
         self.starting_balance = balance
         self.total_profit = 0.0
@@ -51,6 +50,7 @@ class BaseLLMTrader(Trader):
 
         self.last_belief_update_time = 0.0
         self.belief_update_interval = 3
+        self.last_processed_tape_index = 0
 
         self.logger = self._setup_logger(ttype, tid)
 
@@ -102,11 +102,13 @@ class BaseLLMTrader(Trader):
 
     def build_trader_state(self) -> Dict[str, Any]:
         """Build current trader state dict"""
+        avg_purchase_price = sum(self.purchase_prices) / len(self.purchase_prices) if self.purchase_prices else None
+        last_purchase_price = self.purchase_prices[-1] if self.purchase_prices else None
         return {
             'balance': self.balance,
-            'job': self.job,
             'inventory': self.inventory,
-            'last_purchase_price': self.last_purchase_price,
+            'avg_purchase_price': avg_purchase_price,
+            'last_purchase_price': last_purchase_price,
             'n_trades': self.n_trades,
             'recent_prices': []
         }
@@ -133,16 +135,12 @@ class BaseLLMTrader(Trader):
         self.logger.info(response.text.strip())
         self.logger.info("="*80)
 
-        decision = PromptParser.parse_trading_action(
-            response.text.strip(),
-            self.job.upper()
-        )
+        decision = PromptParser.parse_trading_action(response.text.strip())
 
         self.logger.info(f'=== PARSED DECISION ===')
         self.logger.info(f'Action: {decision["action"]}')
         self.logger.info(f'Price: {decision.get("price", "N/A")}')
         self.logger.info(f'Reasoning: {decision.get("reasoning", "N/A")[:500]}')
-        self.logger.info(f'Current Job: {self.job}')
         self.logger.info(f'Balance: ${self.balance:.2f}')
         self.logger.info(f'Inventory: {self.inventory}')
 
@@ -154,15 +152,10 @@ class BaseLLMTrader(Trader):
         raise NotImplementedError("Subclasses must implement getorder()")
 
     def bookkeep(self, time, trade, order, verbose):
-        """Update trader state after trade execution - proprietary traders don't use parent bookkeep"""
-        # Proprietary traders don't have customer orders in self.orders[], so we skip parent Trader.bookkeep()
-        # and handle everything ourselves
-
-        # Add to blotter
+        """Update trader state after trade execution - free trading (no forced buy-sell cycle)"""
         self.blotter.append(trade)
         self.blotter = self.blotter[-self.blotter_length:]
 
-        # Update profit per time
         self.n_trades += 1
         time_elapsed = time - self.birthtime
         self.profitpertime = self.balance / time_elapsed if time_elapsed > 0 else 0
@@ -170,38 +163,41 @@ class BaseLLMTrader(Trader):
         if trade['party1'] == self.tid or trade['party2'] == self.tid:
             transaction_price = trade['price']
 
-            if self.job == 'Buy':
-                self.last_purchase_price = transaction_price
-                self.inventory = 1
-                self.job = 'Sell'
+            if trade['party1'] == self.tid:
+                self.balance -= transaction_price
+                self.inventory += 1
+                self.purchase_prices.append(transaction_price)
                 self.trading_history.append({
                     'time': time,
                     'event': 'BOUGHT',
-                    'price': transaction_price,
-                    'new_job': self.job
+                    'price': transaction_price
                 })
-                self.logger.info(f'TRADE: BOUGHT at ${transaction_price:.2f} | Balance: ${self.balance:.2f} | Next job: {self.job}')
-                print(f"💰 {self.ttype} {self.tid} BOUGHT at ${transaction_price} | Balance: ${self.balance:.0f}")
-            elif self.job == 'Sell':
-                profit = transaction_price - self.last_purchase_price
-                self.total_profit += profit
-                self.balance += profit
-                self.inventory = 0
-                self.job = 'Buy'
-                self.trading_history.append({
-                    'time': time,
-                    'event': 'SOLD',
-                    'price': transaction_price,
-                    'profit': profit,
-                    'new_job': self.job
-                })
-                self.logger.info(f'TRADE: SOLD at ${transaction_price:.2f} | Profit: ${profit:.2f} | Total Profit: ${self.total_profit:.2f} | Balance: ${self.balance:.2f}')
-                if profit > 0:
-                    print(f"🟢 {self.ttype} {self.tid} SOLD at ${transaction_price} | Profit: ${profit:.0f} | Balance: ${self.balance:.0f}")
-                elif profit == 0:
-                    print(f"🟡 {self.ttype} {self.tid} SOLD at ${transaction_price} | Break-even | Balance: ${self.balance:.0f}")
+                self.logger.info(f'TRADE: BOUGHT at ${transaction_price:.2f} | Balance: ${self.balance:.2f} | Inventory: {self.inventory}')
+                print(f"💰 {self.ttype} {self.tid} BOUGHT at ${transaction_price} | Balance: ${self.balance:.0f} | Inventory: {self.inventory}")
+            elif trade['party2'] == self.tid:
+                realized_profit = 0
+                if self.purchase_prices:
+                    purchase_price = self.purchase_prices.pop(0)
+                    realized_profit = transaction_price - purchase_price
+                    self.total_profit += realized_profit
+                    self.inventory -= 1
+                    self.balance += transaction_price
+
+                    self.trading_history.append({
+                        'time': time,
+                        'event': 'SOLD',
+                        'price': transaction_price,
+                        'profit': realized_profit
+                    })
+                    self.logger.info(f'TRADE: SOLD at ${transaction_price:.2f} | Profit: ${realized_profit:.2f} | Total: ${self.total_profit:.2f} | Balance: ${self.balance:.2f} | Inventory: {self.inventory}')
+                    if realized_profit > 0:
+                        print(f"🟢 {self.ttype} {self.tid} SOLD at ${transaction_price} | Profit: ${realized_profit:.0f} | Balance: ${self.balance:.0f} | Inventory: {self.inventory}")
+                    elif realized_profit == 0:
+                        print(f"🟡 {self.ttype} {self.tid} SOLD at ${transaction_price} | Break-even | Balance: ${self.balance:.0f} | Inventory: {self.inventory}")
+                    else:
+                        print(f"🔴 {self.ttype} {self.tid} SOLD at ${transaction_price} | Loss: ${abs(realized_profit):.0f} | Balance: ${self.balance:.0f} | Inventory: {self.inventory}")
                 else:
-                    print(f"🔴 {self.ttype} {self.tid} SOLD at ${transaction_price} | Loss: ${abs(profit):.0f} | Balance: ${self.balance:.0f}")
+                    self.logger.warning(f'TRADE: Attempted SELL without inventory! Transaction price: ${transaction_price:.2f}')
 
             if len(self.trading_history) > self.max_history:
                 self.trading_history = self.trading_history[-self.max_history:]
@@ -239,8 +235,12 @@ class BaseLLMTrader(Trader):
         if hasattr(self, 'belief_graph') and hasattr(self.belief_graph, 'agents'):
             self.logger.info(f"[AGENTS-TRACKED] Currently tracking {len(self.belief_graph.agents)} agents: {self.belief_graph.agents}")
 
+    def _is_prop_trader(self, trader_id: str) -> bool:
+        """Check if trader_id belongs to a proprietary trader"""
+        return trader_id.startswith('P')
+
     def process_and_log_market_events(self, time, lob, trade):
-        """Process market events with comprehensive logging - shared by all belief graph traders"""
+        """Process market events with comprehensive logging - only track prop traders"""
         from .belief_graph import MarketEvent, EventType
 
         if (time - self.last_belief_update_time) < self.belief_update_interval:
@@ -249,17 +249,22 @@ class BaseLLMTrader(Trader):
         self.last_belief_update_time = time
         self.logger.info(f"[BELIEF-THROTTLE] {self.tid}: Running belief graph update at time {time:.1f}")
 
-        # Update asset node with current LOB state FIRST
         if hasattr(self.belief_graph, 'asset_node'):
             self.logger.info(f"[LOB-ACCESS] {self.tid}: Retrieving market state from LOB at time {time:.1f}")
 
             if lob['bids']['n'] > 0:
                 self.belief_graph.asset_node.current_best_bid = lob['bids']['best']
                 self.logger.info(f"[LOB-DATA] best_bid from LOB: {lob['bids']['best']}")
+            else:
+                self.belief_graph.asset_node.current_best_bid = None
+                self.logger.info(f"[LOB-DATA] No bids in LOB, cleared best_bid")
 
             if lob['asks']['n'] > 0:
                 self.belief_graph.asset_node.current_best_ask = lob['asks']['best']
                 self.logger.info(f"[LOB-DATA] best_ask from LOB: {lob['asks']['best']}")
+            else:
+                self.belief_graph.asset_node.current_best_ask = None
+                self.logger.info(f"[LOB-DATA] No asks in LOB, cleared best_ask")
 
             if lob.get('tape') and len(lob['tape']) > 0:
                 last_trade_event = None
@@ -273,49 +278,60 @@ class BaseLLMTrader(Trader):
 
         events_processed = 0
 
-        if trade and 'party1' in trade and 'party2' in trade:
-            buyer_id = trade['party1']
-            seller_id = trade['party2']
-            trade_price = trade['price']
+        if lob.get('tape') and len(lob['tape']) > 0:
+            tape_length = len(lob['tape'])
+            new_entries_start = self.last_processed_tape_index
+            self.logger.info(f"[TAPE-SCAN] Tape has {tape_length} entries, processing from index {new_entries_start}")
 
-            self.logger.debug(f"[TRADE-EVENT] Buyer: {buyer_id}, Seller: {seller_id}, Price: ${trade_price}")
+            for i in range(new_entries_start, tape_length):
+                tape_entry = lob['tape'][i]
+                if tape_entry.get('type') == 'Trade':
+                    buyer_id = tape_entry['party1']
+                    seller_id = tape_entry['party2']
+                    trade_price = tape_entry['price']
+                    trade_time = tape_entry['time']
 
-            if buyer_id != self.tid:
-                event = MarketEvent(
-                    event_id=f"trade_{buyer_id}_{time}",
-                    event_type=EventType.TRADE,
-                    timestamp=time,
-                    agent_id=buyer_id,
-                    price=trade_price,
-                    quantity=1,
-                    counterparty_id=seller_id
-                )
-                if buyer_id not in self.belief_graph.agents:
-                    self.belief_graph.add_agent(buyer_id)
-                    self.logger.info(f"[NEW-AGENT] Added buyer {buyer_id} to belief graph")
-                self.belief_graph.update_beliefs(event)
-                events_processed += 1
+                    buyer_is_prop = self._is_prop_trader(buyer_id)
+                    seller_is_prop = self._is_prop_trader(seller_id)
+                    self.logger.info(f"[TRADE-EVENT] Buyer: {buyer_id} (prop={buyer_is_prop}), Seller: {seller_id} (prop={seller_is_prop}), Price: ${trade_price}")
 
-            if seller_id != self.tid:
-                event = MarketEvent(
-                    event_id=f"trade_{seller_id}_{time}",
-                    event_type=EventType.TRADE,
-                    timestamp=time,
-                    agent_id=seller_id,
-                    price=trade_price,
-                    quantity=1,
-                    counterparty_id=buyer_id
-                )
-                if seller_id not in self.belief_graph.agents:
-                    self.belief_graph.add_agent(seller_id)
-                    self.logger.info(f"[NEW-AGENT] Added seller {seller_id} to belief graph")
-                self.belief_graph.update_beliefs(event)
-                events_processed += 1
+                    if buyer_id != self.tid and self._is_prop_trader(buyer_id):
+                        event = MarketEvent(
+                            event_id=f"trade_{buyer_id}_{trade_time}",
+                            event_type=EventType.TRADE,
+                            timestamp=trade_time,
+                            agent_id=buyer_id,
+                            price=trade_price,
+                            quantity=1,
+                            counterparty_id=seller_id
+                        )
+                        if buyer_id not in self.belief_graph.agents:
+                            self.belief_graph.add_agent(buyer_id)
+                            self.logger.info(f"[NEW-AGENT] Added prop trader {buyer_id} to belief graph")
+                        self.belief_graph.update_beliefs(event)
+                        events_processed += 1
+
+                    if seller_id != self.tid and self._is_prop_trader(seller_id):
+                        event = MarketEvent(
+                            event_id=f"trade_{seller_id}_{trade_time}",
+                            event_type=EventType.TRADE,
+                            timestamp=trade_time,
+                            agent_id=seller_id,
+                            price=trade_price,
+                            quantity=1,
+                            counterparty_id=buyer_id
+                        )
+                        if seller_id not in self.belief_graph.agents:
+                            self.belief_graph.add_agent(seller_id)
+                            self.logger.info(f"[NEW-AGENT] Added prop trader {seller_id} to belief graph")
+                        self.belief_graph.update_beliefs(event)
+                        events_processed += 1
+
+            self.last_processed_tape_index = tape_length
 
         if lob['bids']['n'] > 0:
             for bid in lob['bids']['lob']:
-                # bid = [tid, price, qty]
-                if bid[0] != self.tid:
+                if bid[0] != self.tid and self._is_prop_trader(bid[0]):
                     event = MarketEvent(
                         event_id=f"bid_{bid[0]}_{time}",
                         event_type=EventType.BID,
@@ -326,13 +342,13 @@ class BaseLLMTrader(Trader):
                     )
                     if bid[0] not in self.belief_graph.agents:
                         self.belief_graph.add_agent(bid[0])
+                        self.logger.info(f"[NEW-AGENT] Added prop trader {bid[0]} to belief graph")
                     self.belief_graph.update_beliefs(event)
                     events_processed += 1
 
         if lob['asks']['n'] > 0:
             for ask in lob['asks']['lob']:
-                # ask = [tid, price, qty]
-                if ask[0] != self.tid:
+                if ask[0] != self.tid and self._is_prop_trader(ask[0]):
                     event = MarketEvent(
                         event_id=f"ask_{ask[0]}_{time}",
                         event_type=EventType.ASK,
@@ -343,6 +359,7 @@ class BaseLLMTrader(Trader):
                     )
                     if ask[0] not in self.belief_graph.agents:
                         self.belief_graph.add_agent(ask[0])
+                        self.logger.info(f"[NEW-AGENT] Added prop trader {ask[0]} to belief graph")
                     self.belief_graph.update_beliefs(event)
                     events_processed += 1
 

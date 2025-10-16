@@ -22,49 +22,50 @@ class TraderLLM_Baseline(BaseLLMTrader):
 
     def getorder(self, time, countdown, lob, p_eq=None, q_eq=None, demand_curve=None, supply_curve=None):
         """Generate trading order using LLM with market data only"""
+        try:
+            self.logger.info(f"[GETORDER] Called at time {time:.1f}, inventory={self.inventory}, balance=${self.balance:.0f}")
 
-        if len(lob['bids']['lob']) <= 0 and len(lob['asks']['lob']) <= 0:
+            if len(lob['bids']['lob']) <= 0 and len(lob['asks']['lob']) <= 0:
+                self.logger.info(f"[GETORDER] Empty LOB, returning None")
+                return None
+
+            recent_prices = self.extract_recent_prices(lob, n_prices=5)
+            trader_state = self.build_trader_state()
+            trader_state['recent_prices'] = recent_prices
+
+            market_context = BasePrompts.format_market_context(lob, time, trader_state)
+
+            agent_config = {
+                'use_belief_graph': False,
+                'use_cot': False,
+                'graph_quality': None
+            }
+
+            prompt = PromptBuilder.build_trading_prompt(
+                agent_config,
+                market_context,
+                trader_state,
+                belief_graph_data=None
+            )
+
+            decision = self.get_llm_decision(prompt, time)
+
+            self.trading_history.append({
+                'time': time,
+                'decision': decision['action'],
+                'reasoning': decision['reasoning'][:200]
+            })
+
+            if decision['action'] == 'BUY':
+                if decision['price'] > self.balance or self.inventory >= 10:
+                    return None
+                return Order(self.tid, 'Bid', decision['price'], 1, time, lob['QID'])
+            elif decision['action'] == 'SELL':
+                if self.inventory <= 0:
+                    return None
+                return Order(self.tid, 'Ask', decision['price'], 1, time, lob['QID'])
+
             return None
-
-        recent_prices = self.extract_recent_prices(lob, n_prices=5)
-        trader_state = self.build_trader_state()
-        trader_state['recent_prices'] = recent_prices
-
-        market_context = BasePrompts.format_market_context(lob, time, trader_state)
-
-        agent_config = {
-            'use_belief_graph': False,
-            'use_cot': False,
-            'graph_quality': None,
-            'job': self.job
-        }
-
-        prompt = PromptBuilder.build_trading_prompt(
-            agent_config,
-            market_context,
-            trader_state,
-            belief_graph_data=None
-        )
-
-        decision = self.get_llm_decision(prompt, time)
-
-        if decision['action'] == 'WAIT':
+        except Exception as e:
+            self.logger.error(f"[GETORDER-ERROR] Failed at time {time:.1f}: {e}", exc_info=True)
             return None
-
-        order_price = decision['price']
-        order_type = 'Bid' if self.job == 'Buy' else 'Ask'
-
-        self.trading_history.append({
-            'time': time,
-            'decision': decision['action'],
-            'reasoning': decision['reasoning'][:200]
-        })
-
-        return Order(
-            self.tid,
-            order_type,
-            order_price,
-            1,
-            time,
-            lob['QID']
-        )

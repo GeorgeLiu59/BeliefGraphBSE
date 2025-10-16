@@ -103,6 +103,7 @@ class AgentNode:
     node_type: NodeType = NodeType.AGENT
     last_bid_price: Optional[float] = None
     last_ask_price: Optional[float] = None
+    last_trade_price: Optional[float] = None
     total_trades: int = 0
     total_volume: int = 0
     strategy_type: Optional[str] = None
@@ -117,6 +118,7 @@ class AgentNode:
             'node_type': self.node_type.value,
             'last_bid_price': self.last_bid_price,
             'last_ask_price': self.last_ask_price,
+            'last_trade_price': self.last_trade_price,
             'total_trades': self.total_trades,
             'total_volume': self.total_volume,
             'strategy_type': self.strategy_type,
@@ -227,7 +229,7 @@ class BeliefGraph:
     def update_beliefs(self, event: MarketEvent) -> None:
         """
         Update the belief graph based on a market event.
-        
+
         This is the core function that ingests market events and revises
         the belief graph accordingly.
         """
@@ -925,7 +927,7 @@ class GraphVar1:
         }
 
     def _build_market_state(self) -> Dict[str, Any]:
-        """Build current market state summary"""
+        """Build current market state summary from asset_node"""
         return {
             'current_best_bid': self.asset_node.current_best_bid,
             'current_best_ask': self.asset_node.current_best_ask,
@@ -1014,7 +1016,7 @@ class GraphVar1:
     def update_beliefs(self, event: MarketEvent) -> None:
         """
         Update the belief graph based on a market event.
-        
+
         This is the core function that ingests market events and revises
         the belief graph accordingly.
         """
@@ -1691,7 +1693,7 @@ class GraphVar2:
     def update_beliefs(self, event: MarketEvent) -> None:
         """
         Update the belief graph based on a market event.
-        
+
         This is the core function that ingests market events and revises
         the belief graph accordingly.
         """
@@ -3290,7 +3292,7 @@ class GraphVar3:
         }
 
     def _build_market_state(self) -> Dict[str, Any]:
-        """Build current market state summary"""
+        """Build current market state summary from asset_node"""
         return {
             'current_best_bid': self.asset_node.current_best_bid,
             'current_best_ask': self.asset_node.current_best_ask,
@@ -3306,7 +3308,6 @@ class GraphVar3:
         if not self.model or not event.agent_id:
             return
 
-        # Build context
         agent_history = self._build_agent_history(event.agent_id)
         market_state = self._build_market_state()
         current_beliefs = self.belief_traits[event.agent_id]

@@ -53,7 +53,7 @@ class TraderBG(BaseLLMTrader):
 
     def getorder(self, time, countdown, lob, p_eq=None, q_eq=None, demand_curve=None, supply_curve=None):
         try:
-            self.logger.info(f"[GETORDER] Called at time {time:.1f}, job={self.job}, balance=${self.balance:.0f}")
+            self.logger.info(f"[GETORDER] Called at time {time:.1f}, inventory={self.inventory}, balance=${self.balance:.0f}")
 
             if len(lob['bids']['lob']) <= 0 and len(lob['asks']['lob']) <= 0:
                 self.logger.info(f"[GETORDER] Empty LOB, returning None")
@@ -70,17 +70,22 @@ class TraderBG(BaseLLMTrader):
                 'use_belief_graph': True,
                 'belief_format': self.belief_format,
                 'use_cot': self.use_cot,
-                'graph_quality': 'basic',
-                'job': self.job
+                'graph_quality': 'basic'
             }
 
             prompt = PromptBuilder.build_trading_prompt(agent_config, market_context, trader_state, belief_graph_data=belief_data)
             decision = self.get_llm_decision(prompt, time)
 
-            if decision['action'] == 'WAIT':
-                return None
+            if decision['action'] == 'BUY':
+                if decision['price'] > self.balance or self.inventory >= 10:
+                    return None
+                return Order(self.tid, 'Bid', decision['price'], 1, time, lob['QID'])
+            elif decision['action'] == 'SELL':
+                if self.inventory <= 0:
+                    return None
+                return Order(self.tid, 'Ask', decision['price'], 1, time, lob['QID'])
 
-            return Order(self.tid, 'Bid' if self.job == 'Buy' else 'Ask', decision['price'], 1, time, lob['QID'])
+            return None
         except Exception as e:
             self.logger.error(f"[GETORDER-ERROR] Failed at time {time:.1f}: {e}", exc_info=True)
             return None

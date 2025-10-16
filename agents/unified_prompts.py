@@ -58,6 +58,12 @@ TRADING PRINCIPLES:
         avg_price = sum(recent_prices) / len(recent_prices) if recent_prices else None
         avg_price_str = f"${avg_price:.1f}" if avg_price else "N/A"
 
+        avg_purchase = trader_state.get('avg_purchase_price')
+        avg_purchase_str = f"${avg_purchase:.2f}" if avg_purchase else "None"
+
+        last_purchase = trader_state.get('last_purchase_price')
+        last_purchase_str = f"${last_purchase:.2f}" if last_purchase else "None"
+
         return f"""MARKET DATA:
 Time: {time:.1f}
 Best Bid: {best_bid}
@@ -68,9 +74,9 @@ Average recent price: {avg_price_str}
 
 MY CURRENT STATE:
 Balance: ${trader_state.get('balance', 0)}
-Current job: {trader_state.get('job', 'Unknown')}
 Inventory: {trader_state.get('inventory', 0)} units
-Last purchase price: ${trader_state.get('last_purchase_price', 'None')}
+Average purchase price: {avg_purchase_str}
+Last purchase price: {last_purchase_str}
 Number of completed trades: {trader_state.get('n_trades', 0)}
 """
 
@@ -608,57 +614,46 @@ class TradingActionPrompts:
     """Final action decision prompts"""
 
     @staticmethod
-    def buy_decision_prompt(
+    def unified_trading_prompt(
         market_context: str,
         belief_insights: str,
+        trader_state: Dict[str, Any],
         cot_enabled: bool = False
     ) -> str:
-        """Prompt for BUY decisions"""
+        """Unified prompt for free trading (agent chooses BUY/SELL/WAIT based on inventory and market)"""
         cot_prefix = ChainOfThoughtPrompts.cot_reasoning_prefix() if cot_enabled else ""
         cot_suffix = "" if cot_enabled else ChainOfThoughtPrompts.no_cot_suffix()
 
-        return f"""
-You are a proprietary trader looking to BUY a unit.
+        inventory = trader_state.get('inventory', 0)
+        balance = trader_state.get('balance', 0)
+        avg_purchase = trader_state.get('avg_purchase_price')
 
-{market_context}
-
-{BasePrompts.MARKET_FUNDAMENTALS}
-
-{belief_insights}
-
-CURRENT SITUATION: You currently have NO INVENTORY and are looking to BUY a unit.
-
-STRATEGIC THINKING:
-- Be decisive: opportunities in fast markets don't wait
-- Don't wait for the absolute perfect price - good enough is often better than perfect
-- Consider market momentum and where prices are heading
-- Active participation helps you learn market dynamics faster
-- The sooner you trade, the sooner you can move to the next opportunity
-
-YOUR GOAL: Make profitable trades through active, smart participation in the market.
-
-{cot_prefix}
-
-Respond with ONLY:
-"BUY [exact_price]" - to place a bid at that price
-"WAIT" - to wait for better conditions
-
-{cot_suffix}
+        inventory_context = ""
+        if inventory > 0 and avg_purchase:
+            inventory_context = f"""
+INVENTORY STATUS:
+- You are holding {inventory} unit(s)
+- Average purchase price: ${avg_purchase:.2f}
+- You can BUY more units (if you have cash) or SELL units you're holding
+- Selling above ${avg_purchase:.2f} = profit per unit
+- Selling below ${avg_purchase:.2f} = loss per unit
+"""
+        elif inventory > 0:
+            inventory_context = f"""
+INVENTORY STATUS:
+- You are holding {inventory} unit(s)
+- You can BUY more units (if you have cash) or SELL units you're holding
+"""
+        else:
+            inventory_context = f"""
+INVENTORY STATUS:
+- You have NO inventory
+- You can BUY units to start trading
+- Current cash balance: ${balance:.0f}
 """
 
-    @staticmethod
-    def sell_decision_prompt(
-        market_context: str,
-        belief_insights: str,
-        purchase_price: float,
-        cot_enabled: bool = False
-    ) -> str:
-        """Prompt for SELL decisions"""
-        cot_prefix = ChainOfThoughtPrompts.cot_reasoning_prefix() if cot_enabled else ""
-        cot_suffix = "" if cot_enabled else ChainOfThoughtPrompts.no_cot_suffix()
-
         return f"""
-You are a proprietary trader looking to SELL a unit.
+You are a proprietary trader with FULL FREEDOM to choose your actions.
 
 {market_context}
 
@@ -666,27 +661,24 @@ You are a proprietary trader looking to SELL a unit.
 
 {belief_insights}
 
-CURRENT SITUATION: You are holding 1 unit that you bought for ${purchase_price}. You need to SELL it.
-
-PROFIT/LOSS ANALYSIS:
-- You bought at: ${purchase_price}
-- Break-even price: ${purchase_price}
-- Selling above ${purchase_price} = profit
-- Selling below ${purchase_price} = loss
+{inventory_context}
 
 STRATEGIC THINKING:
-- A small loss now might be better than waiting indefinitely
-- Holding inventory has opportunity cost - you could use that capital for better trades
-- If market conditions suggest prices are falling, cut losses quickly
-- If you see a better opportunity elsewhere, don't be afraid to exit this position
-- Trading velocity matters: active traders make more money overall than passive holders
+- Active trading generates more opportunities than passive waiting
+- Consider market momentum and where prices are heading
+- Don't wait for the absolute perfect price - good enough is often better than perfect
+- Trading velocity matters: completing trades quickly lets you capture new opportunities
+- Strategic losses: taking a small loss now can free capital for bigger gains later
+- Opportunity cost: holding inventory waiting for perfect prices means missing other trades
+- Risk management: avoid spending your entire balance on one trade
 
-YOUR GOAL: Maximize long-term profit by making smart, timely decisions. Don't be paralyzed by avoiding small losses.
+YOUR GOAL: Maximize long-term profit through active, smart participation in the market.
 
 {cot_prefix}
 
-Respond with ONLY:
-"SELL [exact_price]" - to place an ask at that price
+Respond with ONLY ONE of these actions:
+"BUY [exact_price]" - to place a bid at that price (1 unit only)
+"SELL [exact_price]" - to place an ask at that price (1 unit only)
 "WAIT" - to wait for better conditions
 
 {cot_suffix}
@@ -738,33 +730,25 @@ class PromptBuilder:
         else:
             belief_insights = GraphQualityVariants.no_graph_context()
 
-        # Select action prompt based on job
-        if agent_config.get('job') == 'Buy':
-            return TradingActionPrompts.buy_decision_prompt(
-                market_context,
-                belief_insights,
-                agent_config.get('use_cot', False)
-            )
-        else:
-            return TradingActionPrompts.sell_decision_prompt(
-                market_context,
-                belief_insights,
-                trader_state.get('last_purchase_price', 0),
-                agent_config.get('use_cot', False)
-            )
+        # Use unified trading prompt (free choice)
+        return TradingActionPrompts.unified_trading_prompt(
+            market_context,
+            belief_insights,
+            trader_state,
+            agent_config.get('use_cot', False)
+        )
 
 
 class PromptParser:
     """Parse LLM responses consistently across all agents"""
 
     @staticmethod
-    def parse_trading_action(response: str, expected_action: str) -> Dict[str, Any]:
+    def parse_trading_action(response: str) -> Dict[str, Any]:
         """
-        Parse trading action from LLM response
+        Parse trading action from LLM response (free choice: BUY/SELL/WAIT)
 
         Args:
             response: LLM response text
-            expected_action: 'BUY' or 'SELL'
 
         Returns:
             {'action': str, 'price': Optional[int], 'reasoning': str}
@@ -773,27 +757,27 @@ class PromptParser:
 
         response_upper = response.upper().strip()
 
-        # Look for explicit action with price
-        if expected_action == 'BUY':
-            buy_match = re.search(r'BUY\s+(\d+)', response_upper)
-            if buy_match:
-                price = int(buy_match.group(1))
-                price = max(1, min(500, price))
-                return {
-                    'action': 'BUY',
-                    'price': price,
-                    'reasoning': response
-                }
-        elif expected_action == 'SELL':
-            sell_match = re.search(r'SELL\s+(\d+)', response_upper)
-            if sell_match:
-                price = int(sell_match.group(1))
-                price = max(1, min(500, price))
-                return {
-                    'action': 'SELL',
-                    'price': price,
-                    'reasoning': response
-                }
+        # Look for BUY with price (1 unit only)
+        buy_match = re.search(r'BUY\s+(\d+)', response_upper)
+        if buy_match:
+            price = int(buy_match.group(1))
+            price = max(1, min(500, price))
+            return {
+                'action': 'BUY',
+                'price': price,
+                'reasoning': response
+            }
+
+        # Look for SELL with price (1 unit only)
+        sell_match = re.search(r'SELL\s+(\d+)', response_upper)
+        if sell_match:
+            price = int(sell_match.group(1))
+            price = max(1, min(500, price))
+            return {
+                'action': 'SELL',
+                'price': price,
+                'reasoning': response
+            }
 
         # Check for WAIT
         if 'WAIT' in response_upper:
