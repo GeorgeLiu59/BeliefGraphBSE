@@ -42,14 +42,31 @@ class TraderBG(BaseLLMTrader):
                     beliefs['strategy_beliefs'][agent_id] = self.belief_graph.get_beliefs(agent_id)
             return json.dumps(beliefs, indent=2)
         else:
-            narrative_parts = []
+            valuations = []
             for agent_id in self.belief_graph.agents:
                 if agent_id != self.tid:
-                    beliefs = self.belief_graph.get_beliefs(agent_id)
-                    narrative_parts.append(f"Agent {agent_id} observed")
-                    if beliefs:
-                        narrative_parts.append(f"  Their strategy seems to be: {beliefs}")
-            return "\n".join(narrative_parts) if narrative_parts else "No agents observed yet."
+                    agent_beliefs = self.belief_graph.get_agent_beliefs(agent_id)
+                    val_est = agent_beliefs.get('valuation_estimate')
+                    if val_est and isinstance(val_est, (int, float)):
+                        valuations.append((agent_id, val_est))
+
+            valuations.sort(key=lambda x: x[1])
+
+            if not valuations:
+                return "No other traders observed yet."
+
+            parts = ["OTHER TRADERS' ESTIMATED VALUATIONS:"]
+            for agent_id, val in valuations:
+                parts.append(f"  {agent_id}: ${val:.0f}")
+
+            lowest = valuations[0]
+            highest = valuations[-1]
+            parts.append(f"\nKEY INSIGHTS:")
+            parts.append(f"  Lowest valuation: {lowest[0]} at ${lowest[1]:.0f} (good to sell to at high prices)")
+            parts.append(f"  Highest valuation: {highest[0]} at ${highest[1]:.0f} (willing to pay more)")
+            parts.append(f"  Price your orders to exploit these differences!")
+
+            return "\n".join(parts)
 
     def getorder(self, time, countdown, lob, p_eq=None, q_eq=None, demand_curve=None, supply_curve=None):
         try:

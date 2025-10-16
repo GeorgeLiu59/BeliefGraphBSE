@@ -107,20 +107,19 @@ Use this structured data to inform your trading decisions.
     def natural_language_format() -> str:
         """Natural language belief graph scaffolding"""
         return """
-BELIEF GRAPH INSIGHTS (Natural Language):
-The belief graph represents your understanding of market dynamics and other agents' strategies.
-
-Current market beliefs:
+BELIEF GRAPH INSIGHTS:
 {belief_graph_narrative}
 
-This narrative describes:
-- How aggressive or passive other traders are behaving
-- What strategies you believe they are following
-- Overall market sentiment and direction
-- Your assessment of current market risks
-- How confident you are in your understanding of each agent
+HOW TO USE THIS INFORMATION:
+When BUYING:
+  - Bid BELOW the lowest valuation to maximize profit margin
+  - Target traders with lower valuations for better deals
 
-Use these insights to inform your trading decisions.
+When SELLING:
+  - Ask prices NEAR the highest valuation to attract buyers
+  - Target traders with higher valuations who will pay more
+
+CRITICAL: Use these valuations to set competitive prices that other traders will accept!
 """
 
 
