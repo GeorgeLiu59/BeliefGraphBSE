@@ -53,12 +53,33 @@ class TraderPG(BaseLLMTrader):
                     beliefs['strategy_beliefs'][agent_id] = self.belief_graph.get_beliefs(agent_id)
             return json.dumps(beliefs, indent=2)
         else:
-            narrative_parts = ["[PERFECT KNOWLEDGE MODE - Direct strategy access]"]
+            traders_info = []
             for agent_id in self.belief_graph.nodes:
                 if agent_id != self.tid and agent_id != "BSE_ASSET":
-                    beliefs = self.belief_graph.get_beliefs(agent_id)
-                    narrative_parts.append(f"Agent {agent_id}: {beliefs}")
-            return "\n".join(narrative_parts) if len(narrative_parts) > 1 else "No agents observed yet."
+                    agent_beliefs = self.belief_graph.get_agent_beliefs(agent_id)
+                    val_est = agent_beliefs.get('valuation_estimate')
+                    strategy = agent_beliefs.get('strategy_type', 'unknown')
+
+                    if val_est and isinstance(val_est, (int, float)):
+                        traders_info.append((agent_id, val_est, strategy))
+
+            if not traders_info:
+                return "No other traders observed yet."
+
+            traders_info.sort(key=lambda x: x[1])
+
+            parts = ["PERFECT KNOWLEDGE - OTHER TRADERS' EXACT VALUATIONS & STRATEGIES:"]
+            for agent_id, val, strategy in traders_info:
+                parts.append(f"  {agent_id}: ${val:.0f} (strategy: {strategy[:50]}...)")
+
+            lowest = traders_info[0]
+            highest = traders_info[-1]
+            parts.append(f"\nKEY INSIGHTS:")
+            parts.append(f"  Lowest valuation: {lowest[0]} at ${lowest[1]:.0f}")
+            parts.append(f"  Highest valuation: {highest[0]} at ${highest[1]:.0f}")
+            parts.append(f"  You have perfect info - exploit these exact valuations!")
+
+            return "\n".join(parts)
 
     def getorder(self, time, countdown, lob, p_eq=None, q_eq=None, demand_curve=None, supply_curve=None):
         try:

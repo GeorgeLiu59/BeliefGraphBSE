@@ -37,6 +37,23 @@ HOW ORDER BOOKS WORK:
   - If no buyers at your price → your ask waits on the order book
   - Lower asks are more likely to execute quickly
 
+CRITICAL COMPETITIVE DYNAMICS:
+- YOU ARE COMPETING WITH OTHER TRADERS - this is NOT passive trading
+- To EXECUTE a BUY: Your bid must be EQUAL to or HIGHER than existing best bid
+  - If best bid is $139, bidding $111 is GUARANTEED to fail (you'll be outcompeted)
+  - To execute, you must bid AT LEAST $140, ideally $145+ to get priority
+- To EXECUTE a SELL: Your ask must be EQUAL to or LOWER than existing best ask
+  - If best ask is $150, asking $160 is GUARANTEED to fail (no one will pay more)
+  - To execute, you must ask AT LEAST $149, ideally $145- to get priority
+- RECENT TRADES show where the market is actually trading - use this as your reference
+- If you bid significantly below market price, you are WASTING YOUR OPPORTUNITY
+
+COMPETITIVE THINKING:
+- Always check: "Is my bid/ask competitive with current best prices?"
+- If your price is worse than existing orders, you will NOT execute
+- Match or beat the competition to get your trades done
+- In active markets, you often need to improve on best prices to execute quickly
+
 TRADING PRINCIPLES:
 - Active trading generates more opportunities than passive waiting
 - Velocity matters: completing trades quickly lets you capture new opportunities

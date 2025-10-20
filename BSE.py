@@ -52,6 +52,7 @@
 
 import sys
 import math
+import datetime
 import random
 import os
 import time as chrono
@@ -9895,6 +9896,38 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
 
     pending_cust_orders = []
 
+    # DEBUG: Initialize order tracking counters and debug logging
+    order_stats = {
+        'total_selections': 0,
+        'buy_orders_created': 0,
+        'sell_orders_created': 0,
+        'no_orders': 0,
+        'buy_trades_executed': 0,
+        'sell_trades_executed': 0,
+        'buy_orders_rejected': 0,
+        'sell_orders_rejected': 0
+    }
+
+    # Create debug log file in logs directory
+    import datetime as dt
+    import os
+    os.makedirs('logs', exist_ok=True)
+    debug_log_file = open('logs/game.log', 'w', buffering=1)  # Line buffering for real-time logging
+    debug_log_file.write(f'🔍 GAME DEBUG LOG - Session: {sess_id}\n')
+    debug_log_file.write(f'Started at: {dt.datetime.now()}\n')
+    debug_log_file.write('='*80 + '\n\n')
+    debug_log_file.flush()
+
+    def debug_log(message):
+        """Helper function to write to both debug log and optionally console"""
+        debug_log_file.write(f'{message}\n')
+        debug_log_file.flush()
+
+    debug_log(f'🔍 DEBUG: Order tracking initialized')
+    debug_log(f'🔍 DEBUG: Will track BUY vs SELL order execution rates')
+
+    print(f'\n🔍 DEBUG: Order tracking initialized - see logs/game.log for details')
+
     if sess_vrbs:
         print('\n%s;  ' % sess_id)
 
@@ -9928,6 +9961,13 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
         [pending_cust_orders, kills] = customer_orders(time, traders, trader_stats,
                                                        order_schedule, pending_cust_orders, orders_verbose)
 
+        # PERFECT GRAPH UPDATE: Update perfect belief graphs after customer orders are assigned
+        # This ensures they have access to actual trader limit prices
+        for tid, trader in traders.items():
+            if hasattr(trader, 'belief_graph') and hasattr(trader.belief_graph, '_add_perfect_beliefs'):
+                # Update the perfect belief graph with current trader state (including new customer orders)
+                trader.belief_graph._add_perfect_beliefs(tid)
+
         # if any newly-issued customer orders mean quotes on the LOB need to be cancelled, kill them
         if len(kills) > 0:
             # if verbose : print('Kills: %s' % (kills))
@@ -9939,51 +9979,145 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
                     # exchange.del_order(time, traders[kill].lastquote, tape_dump, sess_vrbs)
                     exchange.del_order(time, traders[kill].lastquote, None, sess_vrbs)
 
-        # Batch execution: ALL traders submit orders each round
-        lob = exchange.publish_lob(time, lobframes, lob_verbose)
+        # get a limit-order quote (or None) from a randomly chosen trader
+        all_trader_ids = list(traders.keys())
+        tid = all_trader_ids[random.randint(0, len(all_trader_ids) - 1)]
 
-        for tid in traders.keys():
-            order = traders[tid].getorder(time, time_left, lob)
-            if sess_vrbs:
-                print('trader=%s order=%s' % (tid, order))
+        # DEBUG: Update order tracking
+        order_stats['total_selections'] += 1
 
-            if order is not None:
-                # Only validate customer traders (buyers/sellers), not proprietary traders
-                if tid[0] != 'P' and len(traders[tid].orders) > 0:
-                    if order.otype == 'Ask' and order.price < traders[tid].orders[0].price:
-                        sys.exit('Bad ask')
-                    if order.otype == 'Bid' and order.price > traders[tid].orders[0].price:
-                        sys.exit('Bad bid')
-                # send order to exchange
-                traders[tid].n_quotes = 1
-                trade = exchange.process_order(time, order, tape_dump, process_verbose)
-                if trade is not None:
-                    # trade occurred, so counterparties update order lists and blotters
-                    traders[trade['party1']].bookkeep(time, trade, order, bookkeep_verbose)
-                    traders[trade['party2']].bookkeep(time, trade, order, bookkeep_verbose)
-                    if dumpfile_flags['dump_avgbals']:
-                        trade_stats(sess_id, traders, avg_bals, time, exchange.publish_lob(time, lobframes, lob_verbose))
+        # DEBUG: Log random selection details
+        debug_log(f'🎲 RANDOM SELECTION at time {time:.1f}:')
+        debug_log(f'   Selected trader: {tid} (type: {traders[tid].ttype})')
+        debug_log(f'   All available traders: {all_trader_ids}')
+        debug_log(f'   Total traders in market: {len(all_trader_ids)}')
 
-                    # Record proprietary trader net worths
-                    net_worths = calculate_prop_trader_net_worth(traders, lob)
-                    row = [int(time)] + [net_worths.get(ttype, 500) for ttype in PROP_TRADER_TYPES]
-                    prop_net_worth_writer.writerow(row)
-                    prop_net_worth_file.flush()
-                    if sess_vrbs:
-                        print(f"📊 Trade data written at time {int(time)}")
+        lob_state = exchange.publish_lob(time, lobframes, lob_verbose)
+        order = traders[tid].getorder(time, time_left, lob_state)
 
-        # All traders respond to whatever happened this round
-        lob = exchange.publish_lob(time, lobframes, lob_verbose)
-        any_record_frame = False
-        for t in traders:
-            record_frame = traders[t].respond(time, lob, None, respond_verbose)
-            if record_frame:
-                any_record_frame = True
+        # DEBUG: Log order details and update counters
+        if order is not None:
+            if order.otype == 'Bid':
+                order_stats['buy_orders_created'] += 1
+            elif order.otype == 'Ask':
+                order_stats['sell_orders_created'] += 1
 
-        # log all the PRSH/PRDE/ZIPSH strategy info for this timestep?
-        if any_record_frame and dumpfile_flags['dump_strats']:
-            dump_strats_frame(time, strat_dump, traders)
-            frames_done.add(int(time))
+            debug_log(f'📦 ORDER CREATED by {tid}:')
+            debug_log(f'   Order Type: {order.otype} ({"BUY" if order.otype == "Bid" else "SELL"})')
+            debug_log(f'   Order Price: ${order.price}')
+            debug_log(f'   Order Quantity: {order.qty}')
+            debug_log(f'   Market State: Best Bid=${lob_state["bids"]["best"] if lob_state["bids"]["n"] > 0 else "None"}, Best Ask=${lob_state["asks"]["best"] if lob_state["asks"]["n"] > 0 else "None"}')
+            debug_log(f'📊 STATS: Buy orders: {order_stats["buy_orders_created"]}, Sell orders: {order_stats["sell_orders_created"]}, No orders: {order_stats["no_orders"]}')
+        else:
+            order_stats['no_orders'] += 1
+            debug_log(f'❌ NO ORDER from {tid} (returned None)')
+            debug_log(f'📊 STATS: Buy orders: {order_stats["buy_orders_created"]}, Sell orders: {order_stats["sell_orders_created"]}, No orders: {order_stats["no_orders"]}')
+
+        if sess_vrbs:
+            print('trader=%s order=%s' % (tid, order))
+
+        if order is not None:
+            # Only validate customer traders (buyers/sellers), not proprietary traders
+            if tid[0] != 'P' and len(traders[tid].orders) > 0:
+                if order.otype == 'Ask' and order.price < traders[tid].orders[0].price:
+                    sys.exit('Bad ask')
+                if order.otype == 'Bid' and order.price > traders[tid].orders[0].price:
+                    sys.exit('Bad bid')
+
+            # DEBUG: Log order submission to exchange
+            debug_log(f'🏢 SUBMITTING ORDER TO EXCHANGE:')
+            debug_log(f'   Trader: {tid}')
+            debug_log(f'   Order: {order.otype} at ${order.price}')
+
+            # send order to exchange
+            traders[tid].n_quotes = 1
+            trade = exchange.process_order(time, order, tape_dump, process_verbose)
+
+            # DEBUG: Log exchange processing result
+            if trade is not None:
+                # Track executed trades by type
+                if trade['party1'] == tid and order.otype == 'Bid':  # Our BUY order executed
+                    order_stats['buy_trades_executed'] += 1
+                elif trade['party2'] == tid and order.otype == 'Ask':  # Our SELL order executed
+                    order_stats['sell_trades_executed'] += 1
+
+                debug_log(f'✅ TRADE EXECUTED!')
+                debug_log(f'   Buyer: {trade["party1"]}, Seller: {trade["party2"]}')
+                debug_log(f'   Price: ${trade["price"]}')
+                debug_log(f'   Time: {time:.1f}')
+                debug_log(f'📊 EXECUTION STATS: Buy trades: {order_stats["buy_trades_executed"]}, Sell trades: {order_stats["sell_trades_executed"]}')
+                debug_log(f'📊 SUCCESS RATE: Buy: {order_stats["buy_trades_executed"]}/{order_stats["buy_orders_created"] if order_stats["buy_orders_created"] > 0 else 0:.1%}, Sell: {order_stats["sell_trades_executed"]}/{order_stats["sell_orders_created"] if order_stats["sell_orders_created"] > 0 else 0:.1%}')
+
+                # trade occurred,
+                # so the counterparties update order lists and blotters
+                traders[trade['party1']].bookkeep(time, trade, order, bookkeep_verbose)
+                traders[trade['party2']].bookkeep(time, trade, order, bookkeep_verbose)
+                if dumpfile_flags['dump_avgbals']:
+                    trade_stats(sess_id, traders, avg_bals, time, exchange.publish_lob(time, lobframes, lob_verbose))
+
+                # Record proprietary trader net worths
+                net_worths = calculate_prop_trader_net_worth(traders, lob)
+                row = [int(time)] + [net_worths.get(ttype, 500) for ttype in PROP_TRADER_TYPES]
+                prop_net_worth_writer.writerow(row)
+                prop_net_worth_file.flush()  # Flush data immediately for Ctrl+C safety
+                if sess_vrbs:
+                    print(f"📊 Trade data written at time {int(time)}")
+            else:
+                # Track rejected orders by type
+                if order.otype == 'Bid':
+                    order_stats['buy_orders_rejected'] += 1
+                elif order.otype == 'Ask':
+                    order_stats['sell_orders_rejected'] += 1
+
+                debug_log(f'❌ NO TRADE - Order did not execute')
+                debug_log(f'   Possible reasons: Price not competitive, No counterparty, Order book conditions')
+                debug_log(f'📊 REJECTION STATS: Buy rejected: {order_stats["buy_orders_rejected"]}, Sell rejected: {order_stats["sell_orders_rejected"]}')
+
+                # DEBUG: Show current LOB state when no trade occurs
+                current_lob = exchange.publish_lob(time, lobframes, lob_verbose)
+                debug_log(f'   Current LOB - Best Bid: ${current_lob["bids"]["best"] if current_lob["bids"]["n"] > 0 else "None"}')
+                debug_log(f'   Current LOB - Best Ask: ${current_lob["asks"]["best"] if current_lob["asks"]["n"] > 0 else "None"}')
+                if current_lob["bids"]["n"] > 0:
+                    debug_log(f'   Top 3 Bids: {[bid[1] for bid in current_lob["bids"]["lob"][:3]]}')
+                if current_lob["asks"]["n"] > 0:
+                    debug_log(f'   Top 3 Asks: {[ask[1] for ask in current_lob["asks"]["lob"][:3]]}')
+
+                # DEBUG: Log who has orders stored in the LOB
+                debug_log(f'   📋 ORDER BOOK STORAGE:')
+                if current_lob["bids"]["n"] > 0:
+                    debug_log(f'   ACTIVE BUY ORDERS: {[(bid[0], f"${bid[1]}") for bid in current_lob["bids"]["lob"][:5]]}')
+                if current_lob["asks"]["n"] > 0:
+                    debug_log(f'   ACTIVE SELL ORDERS: {[(ask[0], f"${ask[1]}") for ask in current_lob["asks"]["lob"][:5]]}')
+
+                # DEBUG: Compare our order with market
+                if order.otype == 'Bid':
+                    if current_lob["asks"]["n"] > 0:
+                        debug_log(f'   Our BUY ${order.price} vs Best ASK ${current_lob["asks"]["best"]}: {"COMPETITIVE" if order.price >= current_lob["asks"]["best"] else "TOO LOW"}')
+                    else:
+                        debug_log(f'   Our BUY ${order.price}: NO ASKS in market')
+                elif order.otype == 'Ask':
+                    if current_lob["bids"]["n"] > 0:
+                        debug_log(f'   Our SELL ${order.price} vs Best BID ${current_lob["bids"]["best"]}: {"COMPETITIVE" if order.price <= current_lob["bids"]["best"] else "TOO HIGH"}')
+                    else:
+                        debug_log(f'   Our SELL ${order.price}: NO BIDS in market')
+
+            # traders respond to whatever happened
+            lob = exchange.publish_lob(time, lobframes, lob_verbose)
+            any_record_frame = False
+            for t in traders:
+                # NB respond just updates trader's internal variables
+                # doesn't alter the LOB, so processing each trader in
+                # sequence (rather than random/shuffle) isn't a problem
+                record_frame = traders[t].respond(time, lob, trade, respond_verbose)
+                if record_frame:
+                    any_record_frame = True
+
+            # log all the PRSH/PRDE/ZIPSH strategy info for this timestep?
+            if any_record_frame and dumpfile_flags['dump_strats']:
+                # print one more frame to strategy dumpfile
+                dump_strats_frame(time, strat_dump, traders)
+                # record that we've written this frame
+                frames_done.add(int(time))
 
         time = time + timestep
 
@@ -10011,7 +10145,56 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     print("\n" + "="*60)
     print("PROPRIETARY TRADER NET WORTHS")
     print("="*60)
-    
+
+    # DEBUG: Print final order execution statistics
+    debug_log(f'\n🔍 FINAL ORDER EXECUTION STATISTICS:')
+    debug_log(f'='*60)
+    debug_log(f'Total random selections: {order_stats["total_selections"]}')
+    debug_log(f'BUY orders created: {order_stats["buy_orders_created"]}')
+    debug_log(f'SELL orders created: {order_stats["sell_orders_created"]}')
+    debug_log(f'No orders returned: {order_stats["no_orders"]}')
+    debug_log(f'')
+    debug_log(f'BUY trades executed: {order_stats["buy_trades_executed"]}')
+    debug_log(f'SELL trades executed: {order_stats["sell_trades_executed"]}')
+    debug_log(f'')
+    debug_log(f'BUY success rate: {order_stats["buy_trades_executed"]}/{order_stats["buy_orders_created"] if order_stats["buy_orders_created"] > 0 else 0:.1%}')
+    debug_log(f'SELL success rate: {order_stats["sell_trades_executed"]}/{order_stats["sell_orders_created"] if order_stats["sell_orders_created"] > 0 else 0:.1%}')
+    debug_log(f'')
+    debug_log(f'BUY orders rejected: {order_stats["buy_orders_rejected"]}')
+    debug_log(f'SELL orders rejected: {order_stats["sell_orders_rejected"]}')
+    debug_log(f'')
+
+    # Calculate overall execution imbalance
+    total_executed = order_stats["buy_trades_executed"] + order_stats["sell_trades_executed"]
+    if total_executed > 0:
+        buy_ratio = order_stats["buy_trades_executed"] / total_executed * 100
+        sell_ratio = order_stats["sell_trades_executed"] / total_executed * 100
+        debug_log(f'EXECUTION IMBALANCE: {buy_ratio:.1f}% BUY vs {sell_ratio:.1f}% SELL')
+
+        if abs(buy_ratio - sell_ratio) > 30:
+            debug_log(f'⚠️  MAJOR IMBALANCE DETECTED! This could explain why LLM agents are hoarding!')
+        elif abs(buy_ratio - sell_ratio) > 15:
+            debug_log(f'⚠️  Moderate imbalance detected')
+        else:
+            debug_log(f'✅ Balanced execution rates')
+
+    debug_log(f'='*60)
+    debug_log(f'')
+
+    # Also print summary to console
+    print(f'\n🔍 ORDER EXECUTION SUMMARY (see game.log for details):')
+    print(f'BUY orders: {order_stats["buy_orders_created"]} → {order_stats["buy_trades_executed"]} executed ({order_stats["buy_trades_executed"]}/{order_stats["buy_orders_created"] if order_stats["buy_orders_created"] > 0 else 0:.1%})')
+    print(f'SELL orders: {order_stats["sell_orders_created"]} → {order_stats["sell_trades_executed"]} executed ({order_stats["sell_trades_executed"]}/{order_stats["sell_orders_created"] if order_stats["sell_orders_created"] > 0 else 0:.1%})')
+    if total_executed > 0:
+        print(f'IMBALANCE: {order_stats["buy_trades_executed"]}/{total_executed:.1%} BUY vs {order_stats["sell_trades_executed"]}/{total_executed:.1%} SELL')
+        if abs(buy_ratio - sell_ratio) > 30:
+            print(f'⚠️  MAJOR EXECUTION IMBALANCE DETECTED!')
+    print(f'Detailed logs written to: logs/game.log')
+
+    # Close debug log file
+    debug_log_file.write(f'\nSession ended at: {dt.datetime.now()}\n')
+    debug_log_file.close()
+
     # Get final LOB for current market prices
     final_lob = exchange.publish_lob(time, lobframes, lob_verbose)
     
@@ -10096,8 +10279,8 @@ AVAILABLE_TRADER_TYPES = {
 }
 
 # CONFIGURATION: Edit these to control which traders are included
-ACTIVE_BUYERS = [('ZIC', 3), ('SHVR', 2)]
-ACTIVE_SELLERS = [('ZIC', 3), ('SHVR', 2)]
+ACTIVE_BUYERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]
+ACTIVE_SELLERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]  # Usually same as buyers
 ACTIVE_PROPTRADERS = [
     ('LLM', 1),
     ('BG_NL_COT', 1),
@@ -10345,7 +10528,7 @@ if __name__ == "__main__":
 
         # Use the unified configuration system
         buyers_spec = ACTIVE_BUYERS
-        sellers_spec = ACTIVE_SELLERS  
+        sellers_spec = ACTIVE_SELLERS
         proptraders_spec = ACTIVE_PROPTRADERS
 
         # trader_spec wraps up the specifications for the buyers, sellers, and proptraders

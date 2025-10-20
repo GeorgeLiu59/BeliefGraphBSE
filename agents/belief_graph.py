@@ -2622,15 +2622,23 @@ class PerfectBeliefGraph:
         
         # PERFECT VALUATION - use actual limit price instead of inferred price
         # Original always created valuation belief (even with None), we do same but with perfect info
-        if hasattr(trader, 'orders') and trader.orders:
+        if hasattr(trader, 'orders') and trader.orders and trader.orders[0].price is not None:
             true_valuation = trader.orders[0].price  # Their REAL limit!
             self._add_perfect_belief(agent_id, "valuation", true_valuation, 1.0)
         else:
             # Create valuation belief with None (matching original behavior)
+            # Will be updated later when trader gets actual customer order
             self._add_perfect_belief(agent_id, "valuation", None, 0.1)
         
         # REMOVED: All extra fields (aggressiveness, inventory, margins, etc.)
         # We only use the original 2 belief types that existed before!
+
+    def update_trader_beliefs(self, agent_id: str, trader: Any) -> None:
+        """
+        Public method to update beliefs about a specific trader when they get new orders
+        This can be called from BSE.py when customer orders are assigned
+        """
+        self._add_perfect_beliefs(agent_id, trader)
     
     def _add_perfect_belief(self, agent_id: str, belief_type: str, value: Any, confidence: float = 1.0):
         """Add a belief with perfect confidence (avoids duplicates)"""
@@ -3114,6 +3122,55 @@ class PerfectBeliefGraph:
             'recent_events': len(self.event_history),
             'current_time': self.current_time
         }
+
+    def get_agent_beliefs(self, agent_id: str) -> Dict[str, Any]:
+        """Get all beliefs about a specific agent with PERFECT information"""
+        beliefs = {}
+
+        # First get the raw belief edges
+        for edge in self.edges.values():
+            if edge.target_node == agent_id:
+                if edge.belief_type not in beliefs:
+                    beliefs[edge.belief_type] = []
+                beliefs[edge.belief_type].append(edge.to_dict())
+
+        # Extract valuation estimate from perfect beliefs
+        valuation_estimate = None
+        if agent_id in self.nodes:
+            agent_node = self.nodes[agent_id]
+            if hasattr(agent_node, 'inferred_valuation'):
+                valuation_estimate = agent_node.inferred_valuation
+
+        # Extract from perfect belief edges
+        if 'valuation' in beliefs and beliefs['valuation']:
+            val_edge = beliefs['valuation'][0]
+            val_value = val_edge.get('value')
+            if val_value is not None and not isinstance(val_value, dict):
+                valuation_estimate = val_value
+
+        # Extract strategy type from perfect beliefs
+        strategy_type = None
+        if 'strategy' in beliefs and beliefs['strategy']:
+            strategy_edge = beliefs['strategy'][0]
+            strategy_type = strategy_edge.get('value', strategy_type)
+
+        # Add perfect information directly from trader object
+        trader = self.traders_dict.get(agent_id) if self.traders_dict else None
+        if trader:
+            # Override with perfect information if available
+            if hasattr(trader, 'orders') and trader.orders and trader.orders[0].price is not None:
+                valuation_estimate = trader.orders[0].price
+            elif hasattr(trader, 'limit') and trader.limit is not None:
+                valuation_estimate = trader.limit
+            elif hasattr(trader, 'assignment') and trader.assignment is not None:
+                valuation_estimate = trader.assignment
+
+        # Add simplified summary
+        beliefs['valuation_estimate'] = valuation_estimate
+        beliefs['strategy_type'] = strategy_type
+        beliefs['perfect_knowledge'] = True
+
+        return beliefs
 
 
 class GraphVar3:

@@ -49,7 +49,7 @@ class BaseLLMTrader(Trader):
         self.max_history = 50
 
         self.last_belief_update_time = 0.0
-        self.belief_update_interval = 3
+        self.belief_update_interval = 4
         self.last_processed_tape_index = 0
 
         self.logger = self._setup_logger(ttype, tid)
@@ -236,8 +236,10 @@ class BaseLLMTrader(Trader):
             self.logger.info(f"[AGENTS-TRACKED] Currently tracking {len(self.belief_graph.agents)} agents: {self.belief_graph.agents}")
 
     def _is_prop_trader(self, trader_id: str) -> bool:
-        """Check if trader_id belongs to a proprietary trader"""
-        return trader_id.startswith('P')
+        """Check if trader_id belongs to a trader that should be tracked in belief graph"""
+        # Track ALL traders (both proprietary P* and customer B*/S* traders)
+        # This allows the perfect belief graph to get valuations from customer traders
+        return trader_id.startswith('P') or trader_id.startswith('B') or trader_id.startswith('S')
 
     def process_and_log_market_events(self, time, lob, trade):
         """Process market events with comprehensive logging - only track prop traders"""
