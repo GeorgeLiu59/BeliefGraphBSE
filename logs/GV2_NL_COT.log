@@ -1,0 +1,747 @@
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | === Agent P02 (GV2_NL_COT) initialized ===
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | [UPDATE-SUMMARY] Processed 0 market events at time 0.4
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | === BELIEF GRAPH STATE AT TIME 0.4 ===
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | {
+  "MarketState": {
+    "current_bid": 1,
+    "current_ask": null,
+    "time_remaining": 0
+  },
+  "My_Trading_Beliefs": {
+    "My_Market_Direction": {
+      "actual_signals_I_see": "mixed_price_movements",
+      "my_self_belief": {
+        "direction_distribution": {
+          "up": 0.33,
+          "down": 0.33,
+          "sideways": 0.34
+        }
+      }
+    },
+    "My_Optimal_Entry_Price": {
+      "actual_situation_I_face": "volatile_spreads",
+      "my_self_belief": {
+        "price_distribution": {
+          "85": 0.1,
+          "90": 0.15,
+          "95": 0.2,
+          "100": 0.3,
+          "105": 0.15,
+          "110": 0.1
+        }
+      }
+    },
+    "My_Time_Urgency": {
+      "actual_situation_I_face": "urgent_time_pressure",
+      "my_self_belief": {
+        "urgency_distribution": {
+          "low": 0.5,
+          "medium": 0.3,
+          "high": 0.2
+        }
+      }
+    }
+  },
+  "Competitor_Trading_Beliefs": {
+    "P02_Beliefs": {
+      "P02_Valuation": {
+        "actual_behavior_I_observe": "passive_observation",
+        "p02_self_belief": {
+          "valuation_distribution": {
+            "70": 0.037,
+            "75": 0.037,
+            "80": 0.037,
+            "85": 0.037,
+            "90": 0.037,
+            "95": 0.037,
+            "100": 0.037,
+            "105": 0.037,
+            "110": 0.037,
+            "115": 0.037,
+            "120": 0.037,
+            "125": 0.037,
+            "130": 0.037,
+            "135": 0.037,
+            "140": 0.037,
+            "145": 0.037,
+            "150": 0.037,
+            "155": 0.037,
+            "160": 0.037,
+            "165": 0.037,
+            "170": 0.037,
+            "175": 0.037,
+            "180": 0.037,
+            "185": 0.037,
+            "190": 0.037,
+            "195": 0.037,
+            "200": 0.038
+          }
+        }
+      },
+      "P02_Market_Direction": {
+        "actual_behavior_I_observe": "observed_trading_activity",
+        "p02_self_belief": {
+          "direction_distribution": {
+            "up": 0.33,
+            "down": 0.33,
+            "sideways": 0.34
+          }
+        }
+      },
+      "P02_Desperation_Level": {
+        "actual_behavior_I_observe": "observed_order_pattern",
+        "p02_self_belief": {
+          "desperation_distribution": {
+            "calm": 0.4,
+            "moderate": 0.4,
+            "desperate": 0.2
+          }
+        }
+      },
+      "P02_Available_Cash": {
+        "actual_behavior_I_observe": "very_small_consistent_volumes",
+        "p02_self_belief": {
+          "cash_distribution": {
+            "low": 0.3,
+            "medium": 0.4,
+            "high": 0.3
+          }
+        }
+      },
+      "P02_Exit_Strategy": {
+        "actual_behavior_I_observe": "no_trading_activity",
+        "p02_self_belief": {
+          "exit_distribution": {
+            "hold_till_end": 0.4,
+            "sell_early": 0.3,
+            "opportunistic": 0.3
+          }
+        }
+      }
+    }
+  }
+}
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | ================================================================================
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | [AGENTS-TRACKED] Currently tracking 1 agents: ['P02']
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | [UPDATE-SUMMARY] Processed 0 market events at time 0.6
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | === BELIEF GRAPH STATE AT TIME 0.6 ===
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | {
+  "MarketState": {
+    "current_bid": 39,
+    "current_ask": null,
+    "time_remaining": 0
+  },
+  "My_Trading_Beliefs": {
+    "My_Market_Direction": {
+      "actual_signals_I_see": "mixed_price_movements",
+      "my_self_belief": {
+        "direction_distribution": {
+          "up": 0.33,
+          "down": 0.33,
+          "sideways": 0.34
+        }
+      }
+    },
+    "My_Optimal_Entry_Price": {
+      "actual_situation_I_face": "volatile_spreads",
+      "my_self_belief": {
+        "price_distribution": {
+          "85": 0.1,
+          "90": 0.15,
+          "95": 0.2,
+          "100": 0.3,
+          "105": 0.15,
+          "110": 0.1
+        }
+      }
+    },
+    "My_Time_Urgency": {
+      "actual_situation_I_face": "urgent_time_pressure",
+      "my_self_belief": {
+        "urgency_distribution": {
+          "low": 0.5,
+          "medium": 0.3,
+          "high": 0.2
+        }
+      }
+    }
+  },
+  "Competitor_Trading_Beliefs": {
+    "P02_Beliefs": {
+      "P02_Valuation": {
+        "actual_behavior_I_observe": "passive_observation",
+        "p02_self_belief": {
+          "valuation_distribution": {
+            "70": 0.037,
+            "75": 0.037,
+            "80": 0.037,
+            "85": 0.037,
+            "90": 0.037,
+            "95": 0.037,
+            "100": 0.037,
+            "105": 0.037,
+            "110": 0.037,
+            "115": 0.037,
+            "120": 0.037,
+            "125": 0.037,
+            "130": 0.037,
+            "135": 0.037,
+            "140": 0.037,
+            "145": 0.037,
+            "150": 0.037,
+            "155": 0.037,
+            "160": 0.037,
+            "165": 0.037,
+            "170": 0.037,
+            "175": 0.037,
+            "180": 0.037,
+            "185": 0.037,
+            "190": 0.037,
+            "195": 0.037,
+            "200": 0.038
+          }
+        }
+      },
+      "P02_Market_Direction": {
+        "actual_behavior_I_observe": "observed_trading_activity",
+        "p02_self_belief": {
+          "direction_distribution": {
+            "up": 0.33,
+            "down": 0.33,
+            "sideways": 0.34
+          }
+        }
+      },
+      "P02_Desperation_Level": {
+        "actual_behavior_I_observe": "observed_order_pattern",
+        "p02_self_belief": {
+          "desperation_distribution": {
+            "calm": 0.4,
+            "moderate": 0.4,
+            "desperate": 0.2
+          }
+        }
+      },
+      "P02_Available_Cash": {
+        "actual_behavior_I_observe": "very_small_consistent_volumes",
+        "p02_self_belief": {
+          "cash_distribution": {
+            "low": 0.3,
+            "medium": 0.4,
+            "high": 0.3
+          }
+        }
+      },
+      "P02_Exit_Strategy": {
+        "actual_behavior_I_observe": "no_trading_activity",
+        "p02_self_belief": {
+          "exit_distribution": {
+            "hold_till_end": 0.4,
+            "sell_early": 0.3,
+            "opportunistic": 0.3
+          }
+        }
+      }
+    }
+  }
+}
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | ================================================================================
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | [AGENTS-TRACKED] Currently tracking 1 agents: ['P02']
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | [UPDATE-SUMMARY] Processed 0 market events at time 0.8
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | === BELIEF GRAPH STATE AT TIME 0.8 ===
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | {
+  "MarketState": {
+    "current_bid": 129,
+    "current_ask": null,
+    "time_remaining": 0
+  },
+  "My_Trading_Beliefs": {
+    "My_Market_Direction": {
+      "actual_signals_I_see": "mixed_price_movements",
+      "my_self_belief": {
+        "direction_distribution": {
+          "up": 0.33,
+          "down": 0.33,
+          "sideways": 0.34
+        }
+      }
+    },
+    "My_Optimal_Entry_Price": {
+      "actual_situation_I_face": "volatile_spreads",
+      "my_self_belief": {
+        "price_distribution": {
+          "85": 0.1,
+          "90": 0.15,
+          "95": 0.2,
+          "100": 0.3,
+          "105": 0.15,
+          "110": 0.1
+        }
+      }
+    },
+    "My_Time_Urgency": {
+      "actual_situation_I_face": "urgent_time_pressure",
+      "my_self_belief": {
+        "urgency_distribution": {
+          "low": 0.5,
+          "medium": 0.3,
+          "high": 0.2
+        }
+      }
+    }
+  },
+  "Competitor_Trading_Beliefs": {
+    "P02_Beliefs": {
+      "P02_Valuation": {
+        "actual_behavior_I_observe": "passive_observation",
+        "p02_self_belief": {
+          "valuation_distribution": {
+            "70": 0.037,
+            "75": 0.037,
+            "80": 0.037,
+            "85": 0.037,
+            "90": 0.037,
+            "95": 0.037,
+            "100": 0.037,
+            "105": 0.037,
+            "110": 0.037,
+            "115": 0.037,
+            "120": 0.037,
+            "125": 0.037,
+            "130": 0.037,
+            "135": 0.037,
+            "140": 0.037,
+            "145": 0.037,
+            "150": 0.037,
+            "155": 0.037,
+            "160": 0.037,
+            "165": 0.037,
+            "170": 0.037,
+            "175": 0.037,
+            "180": 0.037,
+            "185": 0.037,
+            "190": 0.037,
+            "195": 0.037,
+            "200": 0.038
+          }
+        }
+      },
+      "P02_Market_Direction": {
+        "actual_behavior_I_observe": "observed_trading_activity",
+        "p02_self_belief": {
+          "direction_distribution": {
+            "up": 0.33,
+            "down": 0.33,
+            "sideways": 0.34
+          }
+        }
+      },
+      "P02_Desperation_Level": {
+        "actual_behavior_I_observe": "observed_order_pattern",
+        "p02_self_belief": {
+          "desperation_distribution": {
+            "calm": 0.4,
+            "moderate": 0.4,
+            "desperate": 0.2
+          }
+        }
+      },
+      "P02_Available_Cash": {
+        "actual_behavior_I_observe": "very_small_consistent_volumes",
+        "p02_self_belief": {
+          "cash_distribution": {
+            "low": 0.3,
+            "medium": 0.4,
+            "high": 0.3
+          }
+        }
+      },
+      "P02_Exit_Strategy": {
+        "actual_behavior_I_observe": "no_trading_activity",
+        "p02_self_belief": {
+          "exit_distribution": {
+            "hold_till_end": 0.4,
+            "sell_early": 0.3,
+            "opportunistic": 0.3
+          }
+        }
+      }
+    }
+  }
+}
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | ================================================================================
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | [AGENTS-TRACKED] Currently tracking 1 agents: ['P02']
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | [UPDATE-SUMMARY] Processed 0 market events at time 1.0
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | === BELIEF GRAPH STATE AT TIME 1.0 ===
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | {
+  "MarketState": {
+    "current_bid": 129,
+    "current_ask": null,
+    "time_remaining": 0
+  },
+  "My_Trading_Beliefs": {
+    "My_Market_Direction": {
+      "actual_signals_I_see": "mixed_price_movements",
+      "my_self_belief": {
+        "direction_distribution": {
+          "up": 0.33,
+          "down": 0.33,
+          "sideways": 0.34
+        }
+      }
+    },
+    "My_Optimal_Entry_Price": {
+      "actual_situation_I_face": "volatile_spreads",
+      "my_self_belief": {
+        "price_distribution": {
+          "85": 0.1,
+          "90": 0.15,
+          "95": 0.2,
+          "100": 0.3,
+          "105": 0.15,
+          "110": 0.1
+        }
+      }
+    },
+    "My_Time_Urgency": {
+      "actual_situation_I_face": "urgent_time_pressure",
+      "my_self_belief": {
+        "urgency_distribution": {
+          "low": 0.5,
+          "medium": 0.3,
+          "high": 0.2
+        }
+      }
+    }
+  },
+  "Competitor_Trading_Beliefs": {
+    "P02_Beliefs": {
+      "P02_Valuation": {
+        "actual_behavior_I_observe": "passive_observation",
+        "p02_self_belief": {
+          "valuation_distribution": {
+            "70": 0.037,
+            "75": 0.037,
+            "80": 0.037,
+            "85": 0.037,
+            "90": 0.037,
+            "95": 0.037,
+            "100": 0.037,
+            "105": 0.037,
+            "110": 0.037,
+            "115": 0.037,
+            "120": 0.037,
+            "125": 0.037,
+            "130": 0.037,
+            "135": 0.037,
+            "140": 0.037,
+            "145": 0.037,
+            "150": 0.037,
+            "155": 0.037,
+            "160": 0.037,
+            "165": 0.037,
+            "170": 0.037,
+            "175": 0.037,
+            "180": 0.037,
+            "185": 0.037,
+            "190": 0.037,
+            "195": 0.037,
+            "200": 0.038
+          }
+        }
+      },
+      "P02_Market_Direction": {
+        "actual_behavior_I_observe": "observed_trading_activity",
+        "p02_self_belief": {
+          "direction_distribution": {
+            "up": 0.33,
+            "down": 0.33,
+            "sideways": 0.34
+          }
+        }
+      },
+      "P02_Desperation_Level": {
+        "actual_behavior_I_observe": "observed_order_pattern",
+        "p02_self_belief": {
+          "desperation_distribution": {
+            "calm": 0.4,
+            "moderate": 0.4,
+            "desperate": 0.2
+          }
+        }
+      },
+      "P02_Available_Cash": {
+        "actual_behavior_I_observe": "very_small_consistent_volumes",
+        "p02_self_belief": {
+          "cash_distribution": {
+            "low": 0.3,
+            "medium": 0.4,
+            "high": 0.3
+          }
+        }
+      },
+      "P02_Exit_Strategy": {
+        "actual_behavior_I_observe": "no_trading_activity",
+        "p02_self_belief": {
+          "exit_distribution": {
+            "hold_till_end": 0.4,
+            "sell_early": 0.3,
+            "opportunistic": 0.3
+          }
+        }
+      }
+    }
+  }
+}
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | ================================================================================
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | [AGENTS-TRACKED] Currently tracking 1 agents: ['P02']
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | [UPDATE-SUMMARY] Processed 0 market events at time 1.2
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | === BELIEF GRAPH STATE AT TIME 1.2 ===
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | {
+  "MarketState": {
+    "current_bid": 129,
+    "current_ask": 178,
+    "time_remaining": 0
+  },
+  "My_Trading_Beliefs": {
+    "My_Market_Direction": {
+      "actual_signals_I_see": "wide_spread_uncertainty",
+      "my_self_belief": {
+        "direction_distribution": {
+          "up": 0.33,
+          "down": 0.33,
+          "sideways": 0.34
+        }
+      }
+    },
+    "My_Optimal_Entry_Price": {
+      "actual_situation_I_face": "high_market_prices",
+      "my_self_belief": {
+        "price_distribution": {
+          "85": 0.1,
+          "90": 0.15,
+          "95": 0.2,
+          "100": 0.3,
+          "105": 0.15,
+          "110": 0.1
+        }
+      }
+    },
+    "My_Time_Urgency": {
+      "actual_situation_I_face": "urgent_time_pressure",
+      "my_self_belief": {
+        "urgency_distribution": {
+          "low": 0.5,
+          "medium": 0.3,
+          "high": 0.2
+        }
+      }
+    }
+  },
+  "Competitor_Trading_Beliefs": {
+    "P02_Beliefs": {
+      "P02_Valuation": {
+        "actual_behavior_I_observe": "passive_observation",
+        "p02_self_belief": {
+          "valuation_distribution": {
+            "70": 0.037,
+            "75": 0.037,
+            "80": 0.037,
+            "85": 0.037,
+            "90": 0.037,
+            "95": 0.037,
+            "100": 0.037,
+            "105": 0.037,
+            "110": 0.037,
+            "115": 0.037,
+            "120": 0.037,
+            "125": 0.037,
+            "130": 0.037,
+            "135": 0.037,
+            "140": 0.037,
+            "145": 0.037,
+            "150": 0.037,
+            "155": 0.037,
+            "160": 0.037,
+            "165": 0.037,
+            "170": 0.037,
+            "175": 0.037,
+            "180": 0.037,
+            "185": 0.037,
+            "190": 0.037,
+            "195": 0.037,
+            "200": 0.038
+          }
+        }
+      },
+      "P02_Market_Direction": {
+        "actual_behavior_I_observe": "observed_trading_activity",
+        "p02_self_belief": {
+          "direction_distribution": {
+            "up": 0.33,
+            "down": 0.33,
+            "sideways": 0.34
+          }
+        }
+      },
+      "P02_Desperation_Level": {
+        "actual_behavior_I_observe": "observed_order_pattern",
+        "p02_self_belief": {
+          "desperation_distribution": {
+            "calm": 0.4,
+            "moderate": 0.4,
+            "desperate": 0.2
+          }
+        }
+      },
+      "P02_Available_Cash": {
+        "actual_behavior_I_observe": "very_small_consistent_volumes",
+        "p02_self_belief": {
+          "cash_distribution": {
+            "low": 0.3,
+            "medium": 0.4,
+            "high": 0.3
+          }
+        }
+      },
+      "P02_Exit_Strategy": {
+        "actual_behavior_I_observe": "no_trading_activity",
+        "p02_self_belief": {
+          "exit_distribution": {
+            "hold_till_end": 0.4,
+            "sell_early": 0.3,
+            "opportunistic": 0.3
+          }
+        }
+      }
+    }
+  }
+}
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | ================================================================================
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | [AGENTS-TRACKED] Currently tracking 1 agents: ['P02']
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | [UPDATE-SUMMARY] Processed 0 market events at time 1.5
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | === BELIEF GRAPH STATE AT TIME 1.5 ===
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | {
+  "MarketState": {
+    "current_bid": 1,
+    "current_ask": 178,
+    "time_remaining": 0
+  },
+  "My_Trading_Beliefs": {
+    "My_Market_Direction": {
+      "actual_signals_I_see": "wide_spread_uncertainty",
+      "my_self_belief": {
+        "direction_distribution": {
+          "up": 0.33,
+          "down": 0.33,
+          "sideways": 0.34
+        }
+      }
+    },
+    "My_Optimal_Entry_Price": {
+      "actual_situation_I_face": "low_market_prices",
+      "my_self_belief": {
+        "price_distribution": {
+          "85": 0.1,
+          "90": 0.15,
+          "95": 0.2,
+          "100": 0.3,
+          "105": 0.15,
+          "110": 0.1
+        }
+      }
+    },
+    "My_Time_Urgency": {
+      "actual_situation_I_face": "urgent_time_pressure",
+      "my_self_belief": {
+        "urgency_distribution": {
+          "low": 0.5,
+          "medium": 0.3,
+          "high": 0.2
+        }
+      }
+    }
+  },
+  "Competitor_Trading_Beliefs": {
+    "P02_Beliefs": {
+      "P02_Valuation": {
+        "actual_behavior_I_observe": "passive_observation",
+        "p02_self_belief": {
+          "valuation_distribution": {
+            "70": 0.037,
+            "75": 0.037,
+            "80": 0.037,
+            "85": 0.037,
+            "90": 0.037,
+            "95": 0.037,
+            "100": 0.037,
+            "105": 0.037,
+            "110": 0.037,
+            "115": 0.037,
+            "120": 0.037,
+            "125": 0.037,
+            "130": 0.037,
+            "135": 0.037,
+            "140": 0.037,
+            "145": 0.037,
+            "150": 0.037,
+            "155": 0.037,
+            "160": 0.037,
+            "165": 0.037,
+            "170": 0.037,
+            "175": 0.037,
+            "180": 0.037,
+            "185": 0.037,
+            "190": 0.037,
+            "195": 0.037,
+            "200": 0.038
+          }
+        }
+      },
+      "P02_Market_Direction": {
+        "actual_behavior_I_observe": "observed_trading_activity",
+        "p02_self_belief": {
+          "direction_distribution": {
+            "up": 0.33,
+            "down": 0.33,
+            "sideways": 0.34
+          }
+        }
+      },
+      "P02_Desperation_Level": {
+        "actual_behavior_I_observe": "observed_order_pattern",
+        "p02_self_belief": {
+          "desperation_distribution": {
+            "calm": 0.4,
+            "moderate": 0.4,
+            "desperate": 0.2
+          }
+        }
+      },
+      "P02_Available_Cash": {
+        "actual_behavior_I_observe": "very_small_consistent_volumes",
+        "p02_self_belief": {
+          "cash_distribution": {
+            "low": 0.3,
+            "medium": 0.4,
+            "high": 0.3
+          }
+        }
+      },
+      "P02_Exit_Strategy": {
+        "actual_behavior_I_observe": "no_trading_activity",
+        "p02_self_belief": {
+          "exit_distribution": {
+            "hold_till_end": 0.4,
+            "sell_early": 0.3,
+            "opportunistic": 0.3
+          }
+        }
+      }
+    }
+  }
+}
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | ================================================================================
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | [AGENTS-TRACKED] Currently tracking 1 agents: ['P02']
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | [UPDATE-SUMMARY] Processed 0 market events at time 1.7
+2025-10-20 20:56:12 | GV2_NL_COT_P02 | ===
