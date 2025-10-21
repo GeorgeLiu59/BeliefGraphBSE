@@ -73,7 +73,7 @@ class TraderHM(BaseLLMTrader):
             self.logger.info(f"[HM-BELIEF-DATA] Total opponent hypotheses: {len(self.hypothesis_scaffold.opponent_hypotheses)}")
             return json.dumps(beliefs, indent=2)
         else:
-            narrative_parts = [f"My trading attributes: {self.attributes}"]
+            narrative_parts = []
 
             hypothesis_context = self.hypothesis_scaffold.get_good_hypotheses_context()
             if hypothesis_context:
@@ -102,8 +102,9 @@ class TraderHM(BaseLLMTrader):
             recent_prices = self.extract_recent_prices(lob, n_prices=5)
             trader_state = self.build_trader_state()
             trader_state['recent_prices'] = recent_prices
+            trader_state['time'] = time  # Add time to trader_state for the context
 
-            market_context = BasePrompts.format_market_context(lob, time, trader_state)
+            market_context = BasePrompts.format_market_context(lob, trader_state)
             belief_data = self.get_belief_data()
 
             agent_config = {

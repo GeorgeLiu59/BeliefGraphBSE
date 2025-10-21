@@ -20,81 +20,99 @@ class BasePrompts:
     """Core prompts shared across all agents"""
 
     MARKET_FUNDAMENTALS = """
-MARKET EDUCATION:
-- Price ranges typically between $1-$500 in this market
-- The market operates as a continuous double auction with a limit order book
-- Orders are matched when bid prices meet or exceed ask prices
-- You can place BID orders (to buy) or ASK orders (to sell)
-
-HOW ORDER BOOKS WORK:
-- To BUY: Place a BID order at your desired price
-  - If sellers exist at/below your bid price → immediate execution
-  - If no sellers at your price → your bid waits on the order book
-  - Higher bids are more likely to execute quickly
-
-- To SELL: Place an ASK order at your desired price
-  - If buyers exist at/above your ask price → immediate execution
-  - If no buyers at your price → your ask waits on the order book
-  - Lower asks are more likely to execute quickly
-
-CRITICAL COMPETITIVE DYNAMICS:
-- YOU ARE COMPETING WITH OTHER TRADERS - this is NOT passive trading
-- To EXECUTE a BUY: Your bid must be EQUAL to or HIGHER than existing best bid
-  - If best bid is $139, bidding $111 is GUARANTEED to fail (you'll be outcompeted)
-  - To execute, you must bid AT LEAST $140, ideally $145+ to get priority
-- To EXECUTE a SELL: Your ask must be EQUAL to or LOWER than existing best ask
-  - If best ask is $150, asking $160 is GUARANTEED to fail (no one will pay more)
-  - To execute, you must ask AT LEAST $149, ideally $145- to get priority
-- RECENT TRADES show where the market is actually trading - use this as your reference
-- If you bid significantly below market price, you are WASTING YOUR OPPORTUNITY
-
-COMPETITIVE THINKING:
-- Always check: "Is my bid/ask competitive with current best prices?"
-- If your price is worse than existing orders, you will NOT execute
-- Match or beat the competition to get your trades done
-- In active markets, you often need to improve on best prices to execute quickly
-
-TRADING PRINCIPLES:
-- Active trading generates more opportunities than passive waiting
-- Velocity matters: completing trades quickly lets you capture new opportunities
-- Strategic losses: taking a small loss now can free capital for bigger gains later
-- Opportunity cost: holding inventory waiting for perfect prices means missing other trades
-- Risk management: avoid spending your entire balance on one trade
-- Trade frequently and learn from market dynamics
-- Analyze other traders' activity patterns and adapt your strategy
+MARKET CONTEXT: Recent prices ${avg_price} | Best: Bid ${best_bid}/Ask ${best_ask} | Spread: ${spread}
 """
 
     @staticmethod
-    def format_market_context(lob: Dict, time: float, trader_state: Dict) -> str:
-        """Format market data consistently across all agents"""
+    def format_complete_order_book(lob: Dict) -> str:
+        """Format complete order book data with trader IDs for analysis"""
+        order_book_data = "COMPLETE ORDER BOOK:\n"
+
+        # Format all bids with trader IDs
+        if lob['bids']['n'] > 0:
+            order_book_data += "BIDS (buy orders waiting):\n"
+            for i in range(min(lob['bids']['n'], 10)):  # Show top 10 bids
+                price = lob['bids']['lob'][i][0]
+                trader_ids = lob['bids']['lob'][i][1]
+                if isinstance(trader_ids, list):
+                    trader_str = ", ".join(trader_ids)
+                else:
+                    trader_str = str(trader_ids)
+                order_book_data += f"  ${price}: {trader_str}\n"
+        else:
+            order_book_data += "BIDS: No bids currently\n"
+
+        # Format all asks with trader IDs
+        if lob['asks']['n'] > 0:
+            order_book_data += "ASKS (sell orders waiting):\n"
+            for i in range(min(lob['asks']['n'], 10)):  # Show top 10 asks
+                price = lob['asks']['lob'][i][0]
+                trader_ids = lob['asks']['lob'][i][1]
+                if isinstance(trader_ids, list):
+                    trader_str = ", ".join(trader_ids)
+                else:
+                    trader_str = str(trader_ids)
+                order_book_data += f"  ${price}: {trader_str}\n"
+        else:
+            order_book_data += "ASKS: No asks currently\n"
+
+        return order_book_data
+
+    @staticmethod
+    def format_trader_activity(trader_activity: Dict[str, Dict], trader_id: str) -> str:
+        """Format trader activity information in the style of TraderLLMProp"""
+        if not trader_activity:
+            return ""
+
+        trader_info = ""
+        for tid, activity in trader_activity.items():
+            if tid != trader_id:  # Don't show our own activity
+                avg_price_str = f"${activity['avg_price']:.1f}" if activity['avg_price'] is not None else "N/A"
+                trader_info += f"Trader {tid}: {activity['trades']} trades, avg price {avg_price_str}\n"
+
+        if trader_info:
+            return f"RECENT TRADER ACTIVITY:\n{trader_info}"
+        return ""
+
+    @staticmethod
+    def format_market_context(lob: Dict, trader_state: Dict) -> str:
+        """Format market data in the style of TraderLLMProp"""
         best_bid = lob['bids']['best'] if lob['bids']['n'] > 0 else None
         best_ask = lob['asks']['best'] if lob['asks']['n'] > 0 else None
         bid_ask_spread = (best_ask - best_bid) if (best_bid and best_ask) else None
 
         recent_prices = trader_state.get('recent_prices', [])
         avg_price = sum(recent_prices) / len(recent_prices) if recent_prices else None
-        avg_price_str = f"${avg_price:.1f}" if avg_price else "N/A"
+        avg_price_str = f"{avg_price:.1f}" if avg_price else "N/A"
 
-        avg_purchase = trader_state.get('avg_purchase_price')
-        avg_purchase_str = f"${avg_purchase:.2f}" if avg_purchase else "None"
+        # Format trader activity information
+        trader_activity = trader_state.get('trader_activity', {})
+        trader_id = trader_state.get('trader_id', 'Unknown')
+        trader_info = BasePrompts.format_trader_activity(trader_activity, trader_id)
 
-        last_purchase = trader_state.get('last_purchase_price')
-        last_purchase_str = f"${last_purchase:.2f}" if last_purchase else "None"
+        # Build full order book snapshot
+        order_book_snapshot = BasePrompts.format_complete_order_book(lob)
 
+        # Clear state reporting in TraderLLMProp style
         return f"""MARKET DATA:
-Time: {time:.1f}
+Time: {trader_state.get('time', 'N/A')}
 Best Bid: {best_bid}
 Best Ask: {best_ask}
 Spread: {bid_ask_spread}
 Recent prices: {recent_prices}
 Average recent price: {avg_price_str}
 
+{trader_info}
+{order_book_snapshot}
 MY CURRENT STATE:
 Balance: ${trader_state.get('balance', 0)}
+Current job: {trader_state.get('job', 'Unknown')}
 Inventory: {trader_state.get('inventory', 0)} units
-Average purchase price: {avg_purchase_str}
-Last purchase price: {last_purchase_str}
+Last purchase price: ${trader_state.get('last_purchase_price', 'None')}
 Number of completed trades: {trader_state.get('n_trades', 0)}
+
+RECENT DECISIONS:
+{trader_state.get('recent_history', 'No recent trading history')}
 """
 
 
@@ -103,40 +121,61 @@ class BeliefGraphScaffolding:
 
     @staticmethod
     def json_format() -> str:
-        """JSON belief graph scaffolding"""
+        """JSON belief graph scaffolding - STRATEGIC INTELLIGENCE"""
         return """
-BELIEF GRAPH INSIGHTS (JSON Format):
-The belief graph tracks your understanding of market dynamics and other agents' strategies.
+## STRATEGIC BELIEF GRAPH INTELLIGENCE
+The belief graph tracks competitor behavior patterns and strategic opportunities.
 
-Current belief graph state:
+**CURRENT BELIEF STATE:**
 {belief_graph_json}
 
-Key elements:
-- "strategy_beliefs": What strategies you believe other agents are following
-- "market_sentiment": Overall market direction and momentum
-- "risk_assessment": Current market risk level
-- "confidence_scores": How confident you are in your beliefs about each agent
+## MARKET-TIMING PLAYBOOK:
+- Directional bias: aggregate each agent's market_direction beliefs (weighted by confidence) to decide if momentum is up, down, or stalling.
+- Inflection scouts: flag agents whose valuations are far from last price; sharp contrasts often precede reversals or breakouts.
+- Liquidity pressure: desperation + cash distributions reveal who must transact soon—use their urgency to time entries before forced moves.
 
-Use this structured data to inform your trading decisions.
+## BUY WINDOWS:
+- Enter when high-confidence agents price well above last trade but bids remain thin; front-run the expected lift.
+- Accumulate when low-valuation bears are nearly exhausted (few high-confidence down calls remain).
+- If sentiment is split, wait for order-flow confirmation instead of forcing trades.
+
+## SELL WINDOWS:
+- Exit or short when confident sellers undercut the tape or hold size at elevated asks.
+- Scale out when bullish valuations cool while desperation to sell rises—momentum likely fading.
+- In mixed signals, protect profit first; re-enter only when conviction resurges.
+
+## RISK & EXECUTION:
+- Size positions by belief confidence; fade low-confidence narratives.
+- Track who consistently provides or takes liquidity to anticipate where price will move fastest.
+- Always sanity-check: if belief-driven bias clashes with tape, wait for alignment.
 """
 
     @staticmethod
     def natural_language_format() -> str:
-        """Natural language belief graph scaffolding"""
+        """Natural language belief graph scaffolding - STRATEGIC INTELLIGENCE"""
         return """
-BELIEF GRAPH INSIGHTS:
+## STRATEGIC INTELLIGENCE FROM BELIEF GRAPH
 {belief_graph_narrative}
 
-HOW TO USE THIS INFORMATION:
-When BUYING:
-  - Bid BELOW the lowest valuation to maximize profit margin
-  - Target traders with lower valuations for better deals
+## MARKET-TIMING PLAYBOOK:
+- Directional bias: aggregate each agent's market_direction beliefs (weighted by confidence) to decide if momentum is up, down, or stalling.
+- Inflection scouts: flag agents whose valuations are far from last price; sharp contrasts often precede reversals or breakouts.
+- Liquidity pressure: desperation + cash distributions reveal who must transact soon—use their urgency to time entries before forced moves.
 
-When SELLING:
-  - Ask prices NEAR the highest valuation to attract buyers
-  - Target traders with higher valuations who will pay more
+## BUY WINDOWS:
+- Enter when high-confidence agents price well above last trade but bids remain thin; front-run the expected lift.
+- Accumulate when low-valuation bears are nearly exhausted (few high-confidence down calls remain).
+- If sentiment is split, wait for order-flow confirmation instead of forcing trades.
 
-CRITICAL: Use these valuations to set competitive prices that other traders will accept!
+## SELL WINDOWS:
+- Exit or short when confident sellers undercut the tape or hold size at elevated asks.
+- Scale out when bullish valuations cool while desperation to sell rises—momentum likely fading.
+- In mixed signals, protect profit first; re-enter only when conviction resurges.
+
+## RISK & EXECUTION:
+- Size positions by belief confidence; fade low-confidence narratives.
+- Track who consistently provides or takes liquidity to anticipate where price will move fastest.
+- Always sanity-check: if belief-driven bias clashes with tape, wait for alignment.
 """
 
 
@@ -466,7 +505,6 @@ Respond with ONLY a JSON object where ALL dimension values are NUMERIC:
         total_trades = agent_history.get('total_trades', 0)
         last_bid = agent_history.get('last_bid_price') or 'None'
         last_ask = agent_history.get('last_ask_price') or 'None'
-        last_trade = agent_history.get('last_trade_price') or 'None'
         recent_events = agent_history.get('recent_events', [])
 
         recent_events_str = "\n".join([
@@ -554,7 +592,6 @@ Respond with ONLY a JSON object with discrete sets:
         total_trades = agent_history.get('total_trades', 0)
         last_bid = agent_history.get('last_bid_price') or 'None'
         last_ask = agent_history.get('last_ask_price') or 'None'
-        last_trade = agent_history.get('last_trade_price') or 'None'
         recent_events = agent_history.get('recent_events', [])
 
         recent_events_str = "\n".join([
@@ -634,71 +671,65 @@ class TradingActionPrompts:
         market_context: str,
         belief_insights: str,
         trader_state: Dict[str, Any],
-        cot_enabled: bool = False
+        cot_enabled: bool = False,
+        job: str = 'Buy'
     ) -> str:
-        """Unified prompt for free trading (agent chooses BUY/SELL/WAIT based on inventory and market)"""
+        """Proprietary trading prompt matching TraderLLMProp style"""
         cot_prefix = ChainOfThoughtPrompts.cot_reasoning_prefix() if cot_enabled else ""
         cot_suffix = "" if cot_enabled else ChainOfThoughtPrompts.no_cot_suffix()
 
-        inventory = trader_state.get('inventory', 0)
+        # Extract market data from context for use in prompts
+        avg_price_line = [line for line in market_context.split('\n') if 'Average recent price:' in line]
+        avg_price_str = avg_price_line[0].split(': ')[1] if avg_price_line else "N/A"
+
+        best_bid_line = [line for line in market_context.split('\n') if 'Best Bid:' in line]
+        best_bid_str = best_bid_line[0].split(': ')[1] if best_bid_line else "None"
+
         balance = trader_state.get('balance', 0)
-        avg_purchase = trader_state.get('avg_purchase_price')
+        last_purchase_price = trader_state.get('last_purchase_price')
+        inventory = trader_state.get('inventory', 0)
 
-        inventory_context = ""
-        if inventory > 0 and avg_purchase:
-            inventory_context = f"""
-INVENTORY STATUS:
-- You are holding {inventory} unit(s)
-- Average purchase price: ${avg_purchase:.2f}
-- You can BUY more units (if you have cash) or SELL units you're holding
-- Selling above ${avg_purchase:.2f} = profit per unit
-- Selling below ${avg_purchase:.2f} = loss per unit
-"""
-        elif inventory > 0:
-            inventory_context = f"""
-INVENTORY STATUS:
-- You are holding {inventory} unit(s)
-- You can BUY more units (if you have cash) or SELL units you're holding
-"""
-        else:
-            inventory_context = f"""
-INVENTORY STATUS:
-- You have NO inventory
-- You can BUY units to start trading
-- Current cash balance: ${balance:.0f}
-"""
-
-        return f"""
-You are a proprietary trader with FULL FREEDOM to choose your actions.
+        # Job-specific instructions matching TraderLLMProp style
+        if job == 'Buy':
+            prompt = f"""You are a proprietary trader with ${balance} buying low to sell high later.
 
 {market_context}
 
-{BasePrompts.MARKET_FUNDAMENTALS}
+{belief_insights}
+
+TRADING GUIDELINES:
+- Prop Trading LLM (you) makes money by taking directional bets on price movements, buying low and selling high through market analysis and timing, aiming for larger profits from successful predictions while managing the risk of being wrong on market direction.
+
+## BUY MISSION
+Current inventory: {inventory} units | Goal: Buy low for profit
+
+{cot_prefix}
+Decision: BUY [price] or WAIT
+{cot_suffix}"""
+
+        else:  # job == 'Sell'
+            prompt = f"""You are a proprietary trader selling high to lock in profit.
+
+{market_context}
 
 {belief_insights}
 
-{inventory_context}
+## SELL MISSION
+Inventory: {inventory} units | Last purchase: ${last_purchase_price}
+Goal: Sell above ${last_purchase_price} for profit
 
-STRATEGIC THINKING:
-- Active trading generates more opportunities than passive waiting
-- Consider market momentum and where prices are heading
-- Don't wait for the absolute perfect price - good enough is often better than perfect
-- Trading velocity matters: completing trades quickly lets you capture new opportunities
-- Strategic losses: taking a small loss now can free capital for bigger gains later
-- Opportunity cost: holding inventory waiting for perfect prices means missing other trades
-- Risk management: avoid spending your entire balance on one trade
+TRADING GUIDELINES:
+- Prop Trading LLM (you) makes money by taking directional bets on price movements, buying low and selling high through market analysis and timing, aiming for larger profits from successful predictions while managing the risk of being wrong on market direction.
 
-YOUR GOAL: Maximize long-term profit through active, smart participation in the market.
+Market pressure:
+- Current best bid: {best_bid_str}
+- Break-even needed: >${last_purchase_price}
 
 {cot_prefix}
+Decision: SELL [price] or WAIT
+{cot_suffix}"""
 
-Respond with ONLY ONE of these actions:
-"BUY [exact_price]" - to place a bid at that price (1 unit only)
-"SELL [exact_price]" - to place an ask at that price (1 unit only)
-"WAIT" - to wait for better conditions
-
-{cot_suffix}
-"""
+        return prompt
 
 
 class PromptBuilder:
@@ -746,12 +777,13 @@ class PromptBuilder:
         else:
             belief_insights = GraphQualityVariants.no_graph_context()
 
-        # Use unified trading prompt (free choice)
+        # Use job-aware unified trading prompt (proprietary trading pattern)
         return TradingActionPrompts.unified_trading_prompt(
             market_context,
             belief_insights,
             trader_state,
-            agent_config.get('use_cot', False)
+            agent_config.get('use_cot', False),
+            trader_state.get('job', 'Buy')  # Pass current job state
         )
 
 

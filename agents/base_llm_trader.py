@@ -43,13 +43,17 @@ class BaseLLMTrader(Trader):
         self.n_trades = 0
         self.purchase_prices = []
 
+        # Proprietary trading state for buy/sell toggle
+        self.job = 'Buy'  # flag switches between 'Buy' & 'Sell'
+        self.last_purchase_price = None
+
         self.starting_balance = balance
         self.total_profit = 0.0
         self.trading_history = []
         self.max_history = 50
 
         self.last_belief_update_time = 0.0
-        self.belief_update_interval = 4
+        self.belief_update_interval = 10
         self.last_processed_tape_index = 0
 
         self.logger = self._setup_logger(ttype, tid)
@@ -103,14 +107,14 @@ class BaseLLMTrader(Trader):
     def build_trader_state(self) -> Dict[str, Any]:
         """Build current trader state dict"""
         avg_purchase_price = sum(self.purchase_prices) / len(self.purchase_prices) if self.purchase_prices else None
-        last_purchase_price = self.purchase_prices[-1] if self.purchase_prices else None
         return {
             'balance': self.balance,
             'inventory': self.inventory,
             'avg_purchase_price': avg_purchase_price,
-            'last_purchase_price': last_purchase_price,
+            'last_purchase_price': self.last_purchase_price,
             'n_trades': self.n_trades,
-            'recent_prices': []
+            'recent_prices': [],
+            'job': self.job  # Add the buy/sell job state
         }
 
     def get_llm_decision(self, prompt: str, current_time: float = None) -> Dict[str, Any]:
@@ -152,7 +156,7 @@ class BaseLLMTrader(Trader):
         raise NotImplementedError("Subclasses must implement getorder()")
 
     def bookkeep(self, time, trade, order, verbose):
-        """Update trader state after trade execution - free trading (no forced buy-sell cycle)"""
+        """Update trader state after trade execution with buy/sell toggle pattern"""
         self.blotter.append(trade)
         self.blotter = self.blotter[-self.blotter_length:]
 
@@ -164,40 +168,56 @@ class BaseLLMTrader(Trader):
             transaction_price = trade['price']
 
             if trade['party1'] == self.tid:
+                # Successfully BOUGHT a unit
                 self.balance -= transaction_price
-                self.inventory += 1
-                self.purchase_prices.append(transaction_price)
+                self.last_purchase_price = transaction_price
+                self.inventory = 1
+                self.job = 'Sell'  # CRITICAL: Switch to selling mode
+
                 self.trading_history.append({
                     'time': time,
                     'event': 'BOUGHT',
-                    'price': transaction_price
+                    'price': transaction_price,
+                    'new_balance': self.balance,
+                    'new_job': self.job
                 })
-                self.logger.info(f'TRADE: BOUGHT at ${transaction_price:.2f} | Balance: ${self.balance:.2f} | Inventory: {self.inventory}')
-                print(f"💰 {self.ttype} {self.tid} BOUGHT at ${transaction_price} | Balance: ${self.balance:.0f} | Inventory: {self.inventory}")
+
+                self.logger.info(f'TRADE: BOUGHT at ${transaction_price:.2f} | Balance: ${self.balance:.2f} | Job: {self.job}')
+                print(f"📦 {self.ttype} {self.tid} BOUGHT at ${transaction_price} | Balance: ${self.balance:.0f} | Job: {self.job}")
+
             elif trade['party2'] == self.tid:
-                realized_profit = 0
-                if self.purchase_prices:
-                    purchase_price = self.purchase_prices.pop(0)
-                    realized_profit = transaction_price - purchase_price
-                    self.total_profit += realized_profit
-                    self.inventory -= 1
-                    self.balance += transaction_price
+                # Successfully SOLD a unit
+                old_balance = self.balance
+                self.balance += transaction_price
+
+                if self.last_purchase_price is not None:
+                    profit = transaction_price - self.last_purchase_price
+                    emoji = "🟢" if profit >= 0 else "🔴"
 
                     self.trading_history.append({
                         'time': time,
                         'event': 'SOLD',
                         'price': transaction_price,
-                        'profit': realized_profit
+                        'profit': profit,
+                        'new_balance': self.balance,
+                        'new_job': self.job
                     })
-                    self.logger.info(f'TRADE: SOLD at ${transaction_price:.2f} | Profit: ${realized_profit:.2f} | Total: ${self.total_profit:.2f} | Balance: ${self.balance:.2f} | Inventory: {self.inventory}')
-                    if realized_profit > 0:
-                        print(f"🟢 {self.ttype} {self.tid} SOLD at ${transaction_price} | Profit: ${realized_profit:.0f} | Balance: ${self.balance:.0f} | Inventory: {self.inventory}")
-                    elif realized_profit == 0:
-                        print(f"🟡 {self.ttype} {self.tid} SOLD at ${transaction_price} | Break-even | Balance: ${self.balance:.0f} | Inventory: {self.inventory}")
-                    else:
-                        print(f"🔴 {self.ttype} {self.tid} SOLD at ${transaction_price} | Loss: ${abs(realized_profit):.0f} | Balance: ${self.balance:.0f} | Inventory: {self.inventory}")
+
+                    self.logger.info(f'TRADE: SOLD at ${transaction_price:.2f} | Profit: ${profit:.2f} | Balance: ${self.balance:.2f}')
+                    print(f"{emoji} {self.ttype} {self.tid} SOLD at ${transaction_price} | Profit: ${profit:.0f} | Balance: ${self.balance:.0f}")
                 else:
-                    self.logger.warning(f'TRADE: Attempted SELL without inventory! Transaction price: ${transaction_price:.2f}')
+                    profit = 0  # Fallback if purchase price missing
+                    self.logger.warning(f'TRADE: SOLD without purchase price recorded')
+                    print(f"🔴 {self.ttype} {self.tid} SOLD at ${transaction_price} | No purchase price | Balance: ${self.balance:.0f}")
+
+                # Reset state and switch back to buying
+                self.inventory = 0
+                self.last_purchase_price = None
+                self.job = 'Buy'  # CRITICAL: Switch back to buying mode
+
+                # Update job in history after reset
+                if len(self.trading_history) > 0:
+                    self.trading_history[-1]['new_job'] = self.job
 
             if len(self.trading_history) > self.max_history:
                 self.trading_history = self.trading_history[-self.max_history:]

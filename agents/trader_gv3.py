@@ -150,7 +150,7 @@ class TraderGV3(BaseLLMTrader):
                     beliefs['competitor_belief_traits'][agent_id] = agent_beliefs.get('attributes', {})
             return json.dumps(beliefs, indent=2)
         else:
-            narrative_parts = [f"My trading attributes: {self.attributes}"]
+            narrative_parts = []
             for agent_id in self.belief_graph.agents:
                 if agent_id != self.tid:
                     agent_beliefs = self.belief_graph.get_agent_beliefs(agent_id)
@@ -174,8 +174,9 @@ class TraderGV3(BaseLLMTrader):
             recent_prices = self.extract_recent_prices(lob, n_prices=5)
             trader_state = self.build_trader_state()
             trader_state['recent_prices'] = recent_prices
+            trader_state['time'] = time  # Add time to trader_state for the context
 
-            market_context = BasePrompts.format_market_context(lob, time, trader_state)
+            market_context = BasePrompts.format_market_context(lob, trader_state)
             belief_data = self.get_belief_data()
 
             agent_config = {

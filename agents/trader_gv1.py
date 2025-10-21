@@ -68,8 +68,9 @@ class TraderGV1(BaseLLMTrader):
             recent_prices = self.extract_recent_prices(lob, n_prices=5)
             trader_state = self.build_trader_state()
             trader_state['recent_prices'] = recent_prices
+            trader_state['time'] = time  # Add time to trader_state for the context
 
-            market_context = BasePrompts.format_market_context(lob, time, trader_state)
+            market_context = BasePrompts.format_market_context(lob, trader_state)
             belief_data = self.get_belief_data()
 
             agent_config = {

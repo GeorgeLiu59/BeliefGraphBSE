@@ -32,8 +32,9 @@ class TraderLLM_Baseline(BaseLLMTrader):
             recent_prices = self.extract_recent_prices(lob, n_prices=5)
             trader_state = self.build_trader_state()
             trader_state['recent_prices'] = recent_prices
+            trader_state['time'] = time  # Add time to trader_state for the context
 
-            market_context = BasePrompts.format_market_context(lob, time, trader_state)
+            market_context = BasePrompts.format_market_context(lob, trader_state)
 
             agent_config = {
                 'use_belief_graph': False,

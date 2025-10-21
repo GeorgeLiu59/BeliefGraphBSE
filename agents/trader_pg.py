@@ -70,7 +70,8 @@ class TraderPG(BaseLLMTrader):
 
             parts = ["PERFECT KNOWLEDGE - OTHER TRADERS' EXACT VALUATIONS & STRATEGIES:"]
             for agent_id, val, strategy in traders_info:
-                parts.append(f"  {agent_id}: ${val:.0f} (strategy: {strategy[:50]}...)")
+                strategy_display = strategy if strategy else 'unknown'
+                parts.append(f"  {agent_id}: ${val:.0f} (strategy: {strategy_display})")
 
             lowest = traders_info[0]
             highest = traders_info[-1]
@@ -92,8 +93,9 @@ class TraderPG(BaseLLMTrader):
             recent_prices = self.extract_recent_prices(lob, n_prices=5)
             trader_state = self.build_trader_state()
             trader_state['recent_prices'] = recent_prices
+            trader_state['time'] = time  # Add time to trader_state for the context
 
-            market_context = BasePrompts.format_market_context(lob, time, trader_state)
+            market_context = BasePrompts.format_market_context(lob, trader_state)
             belief_data = self.get_belief_data()
 
             agent_config = {

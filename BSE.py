@@ -418,11 +418,22 @@ class Exchange(Orderbook):
             # process the trade
             if vrbs:
                 print('>>>>>>>>>>>>>>>>>TRADE t=%010.3f $%d %s %s' % (time, price, counterparty, order.tid))
+
+            # Determine buyer and seller based on order type
+            if order.otype == 'Bid':
+                # This is a BUY order, so order.tid is the buyer, counterparty is the seller
+                buyer = order.tid
+                seller = counterparty
+            else:
+                # This is a SELL order, so order.tid is the seller, counterparty is the buyer
+                buyer = counterparty
+                seller = order.tid
+
             transaction_record = {'type': 'Trade',
                                   'time': time,
                                   'price': price,
-                                  'party1': counterparty,
-                                  'party2': order.tid,
+                                  'party1': buyer,
+                                  'party2': seller,
                                   'qty': order.qty
                                   }
             if tape_file is not None:
@@ -2635,7 +2646,7 @@ class TraderLLMProp(Trader):
 
     def _format_market_context(self, lob, time):
         """
-        Format market data for the LLM in a structured way
+        Format market data for the LLM with rich trading history and performance analytics
         """
         # Recent transaction prices for context
         recent_prices = []
@@ -2646,19 +2657,19 @@ class TraderLLMProp(Trader):
                 recent_prices.append(lob['tape'][tape_position]['price'])
                 n_prices += 1
             tape_position -= 1
-        
+
         avg_price = sum(recent_prices) / len(recent_prices) if recent_prices else None
         avg_price_str = f"{avg_price:.1f}" if avg_price else "N/A"
-        
+
         # Current market state
         best_bid = lob['bids']['best'] if lob['bids']['n'] > 0 else None
         best_ask = lob['asks']['best'] if lob['asks']['n'] > 0 else None
         bid_ask_spread = (best_ask - best_bid) if (best_bid and best_ask) else None
-        
+
         # Analyze trader activity
         trade_analysis = self.analyze_recent_trades(lob, n_trades=10)
         trader_activity = trade_analysis['trader_activity']
-        
+
         # Format trader activity information
         trader_info = ""
         if trader_activity:
@@ -2666,9 +2677,18 @@ class TraderLLMProp(Trader):
             for trader_id, activity in trader_activity.items():
                 if trader_id != self.tid:  # Don't show our own activity
                     avg_price_str = f"${activity['avg_price']:.1f}" if activity['avg_price'] is not None else "N/A"
-                trader_info += f"Trader {trader_id}: {activity['trades']} trades, avg price {avg_price_str}\n"
-        
-        # Clear state reporting
+                    trader_info += f"Trader {trader_id}: {activity['trades']} trades, avg price {avg_price_str}\n"
+
+        # Calculate comprehensive performance metrics
+        performance_metrics = self._calculate_performance_metrics()
+
+        # Format rich trading history with profit/loss analysis
+        trading_analysis = self._format_trading_analysis()
+
+        # Market sentiment and trend analysis
+        market_analysis = self._analyze_market_trends(recent_prices)
+
+        # Clear state reporting with rich context
         context = f"""MARKET DATA:
 Time: {time:.1f}
 Best Bid: {best_bid}
@@ -2678,6 +2698,8 @@ Recent prices: {recent_prices}
 Average recent price: {avg_price_str}
 
 {trader_info}
+{market_analysis}
+
 MY CURRENT STATE:
 Balance: ${self.balance}
 Current job: {self.job}
@@ -2685,10 +2707,158 @@ Inventory: {self.inventory} units
 Last purchase price: ${self.last_purchase_price if self.last_purchase_price else 'None'}
 Number of completed trades: {self.n_trades}
 
+PERFORMANCE METRICS:
+{performance_metrics}
+
+TRADING HISTORY & ANALYSIS:
+{trading_analysis}
+
 RECENT DECISIONS:
 {self._format_recent_history()}
 """
         return context
+
+    def _calculate_performance_metrics(self):
+        """Calculate comprehensive performance metrics for the LLM"""
+        metrics = []
+
+        # Calculate total profit/loss
+        total_profit = self.balance - 500  # Started with $500
+        profit_status = "PROFIT" if total_profit >= 0 else "LOSS"
+        metrics.append(f"Net P&L: {profit_status} of ${total_profit:.2f}")
+
+        # Calculate win rate (profitable completed trades)
+        profitable_trades = 0
+        completed_trades = 0
+
+        for entry in self.trading_history:
+            # Handle different trading history formats
+            if 'event' in entry:
+                event_type = entry['event']
+            elif 'decision' in entry:
+                event_type = 'BOUGHT' if entry['decision'] == 'BUY' else ('SOLD' if entry['decision'] == 'SELL' else None)
+            else:
+                event_type = None
+
+            if event_type in ['BOUGHT', 'SOLD']:
+                completed_trades += 1
+                if event_type == 'SOLD' and entry.get('profit', 0) > 0:
+                    profitable_trades += 1
+
+        # Only calculate win rate if we have complete trades (buy+sell pairs)
+        complete_trades = completed_trades // 2
+        if complete_trades > 0:
+            win_rate = (profitable_trades / complete_trades) * 100
+            metrics.append(f"Win rate: {win_rate:.1f}%")
+
+        # Calculate average profit per trade
+        profits = [entry.get('profit', 0) for entry in self.trading_history if entry.get('profit') is not None]
+        if profits:
+            avg_profit = sum(profits) / len(profits)
+            metrics.append(f"Average profit per trade: ${avg_profit:.2f}")
+
+        # Inventory efficiency
+        if self.inventory > 0:
+            # Use last purchase price for inventory valuation
+            inventory_value = self.inventory * (self.last_purchase_price or 100)  # Fallback to $100 if no purchase price
+            metrics.append(f"Inventory value: ${inventory_value:.2f} ({self.inventory} units)")
+
+        # Trading activity level
+        metrics.append(f"Trading activity: {self.n_trades} trades completed")
+
+        # Profit per time
+        if self.profitpertime > 0:
+            metrics.append(f"Profit rate: ${self.profitpertime:.2f} per time unit")
+
+        return "\n".join(metrics)
+
+    def _format_trading_analysis(self):
+        """Format detailed trading analysis with insights"""
+        if not self.trading_history:
+            return "No trading history available"
+
+        analysis = []
+
+        # Recent trade performance
+        recent_trades = self.trading_history[-10:]  # Last 10 events
+        buy_trades = [t for t in recent_trades if t.get('event') == 'BOUGHT']
+        sell_trades = [t for t in recent_trades if t.get('event') == 'SOLD']
+
+        if buy_trades:
+            avg_buy_price = sum(t['price'] for t in buy_trades) / len(buy_trades)
+            analysis.append(f"Recent buy average: ${avg_buy_price:.1f} ({len(buy_trades)} trades)")
+
+        if sell_trades:
+            avg_sell_price = sum(t['price'] for t in sell_trades) / len(sell_trades)
+            total_profit = sum(t.get('profit', 0) for t in sell_trades)
+            analysis.append(f"Recent sell average: ${avg_sell_price:.1f} ({len(sell_trades)} trades)")
+            analysis.append(f"Recent total profit: ${total_profit:.2f}")
+
+        # Trading pattern analysis
+        if len(self.trading_history) >= 4:
+            last_buy = None
+            buy_sell_cycles = []
+
+            for entry in self.trading_history:
+                # Handle different trading history formats
+                if 'event' in entry:
+                    event_type = entry['event']
+                elif 'decision' in entry:
+                    # Convert decision format to event format
+                    event_type = 'BOUGHT' if entry['decision'] == 'BUY' else None
+                    if entry['decision'] == 'SELL':
+                        event_type = 'SOLD'
+                else:
+                    continue
+
+                if event_type == 'BOUGHT':
+                    last_buy = entry
+                elif event_type == 'SOLD' and last_buy:
+                    profit = entry.get('profit', 0)
+                    cycle_time = entry['time'] - last_buy['time']
+                    buy_sell_cycles.append({
+                        'profit': profit,
+                        'duration': cycle_time,
+                        'buy_price': last_buy.get('price', 0),
+                        'sell_price': entry.get('price', 0)
+                    })
+                    last_buy = None
+
+            if buy_sell_cycles:
+                avg_cycle_time = sum(c['duration'] for c in buy_sell_cycles) / len(buy_sell_cycles)
+                profitable_cycles = sum(1 for c in buy_sell_cycles if c['profit'] > 0)
+                analysis.append(f"Average holding time: {avg_cycle_time:.1f} time units")
+                analysis.append(f"Profitable cycles: {profitable_cycles}/{len(buy_sell_cycles)}")
+
+        return "\n".join(analysis) if analysis else "Limited trading data for analysis"
+
+    def _analyze_market_trends(self, recent_prices):
+        """Analyze market trends and provide sentiment analysis"""
+        if not recent_prices or len(recent_prices) < 3:
+            return "MARKET SENTIMENT: Insufficient data for trend analysis"
+
+        # Calculate price trend
+        price_change = recent_prices[-1] - recent_prices[0]
+        price_change_pct = (price_change / recent_prices[0]) * 100 if recent_prices[0] != 0 else 0
+
+        # Determine trend direction
+        if price_change_pct > 2:
+            trend = "BULLISH (upward)"
+        elif price_change_pct < -2:
+            trend = "BEARISH (downward)"
+        else:
+            trend = "STABLE/SIDEWAYS"
+
+        # Calculate volatility
+        if len(recent_prices) >= 2:
+            avg_price = sum(recent_prices) / len(recent_prices)
+            variance = sum((p - avg_price) ** 2 for p in recent_prices) / len(recent_prices)
+            volatility = variance ** 0.5
+            volatility_level = "HIGH" if volatility > avg_price * 0.05 else "LOW"
+        else:
+            volatility_level = "UNKNOWN"
+
+        return f"MARKET SENTIMENT: {trend} (change: {price_change_pct:+.1f}%, volatility: {volatility_level})"
 
     def _format_recent_history(self):
         """Format recent trading decisions and state changes for context"""
@@ -2700,9 +2870,12 @@ RECENT DECISIONS:
             if 'event' in entry and entry['event'] in ['BOUGHT', 'SOLD']:
                 # This is a trade execution
                 if entry['event'] == 'BOUGHT':
-                    history_str += f"Time {entry['time']:.1f}: BOUGHT at ${entry['price']}, switched to job={entry['new_job']}\n"
+                    qty = entry.get('qty', 1)
+                    history_str += f"Time {entry['time']:.1f}: BOUGHT {qty} unit(s) at ${entry['price']}, inventory={entry.get('inventory', 'N/A')}, job={entry['job']}\n"
                 else:  # SOLD
-                    history_str += f"Time {entry['time']:.1f}: SOLD at ${entry['price']}, profit=${entry['profit']}, switched to job={entry['new_job']}\n"
+                    qty = entry.get('qty', 1)
+                    profit = entry.get('profit', 0)
+                    history_str += f"Time {entry['time']:.1f}: SOLD {qty} unit(s) at ${entry['price']}, profit=${profit:.2f}, inventory={entry.get('inventory', 'N/A')}, job={entry['job']}\n"
             else:
                 # This is a decision
                 history_str += f"Time {entry['time']:.1f}: DECISION={entry['decision']} - {entry['reasoning']}\n"
@@ -2730,89 +2903,30 @@ RECENT DECISIONS:
         best_bid_str = best_bid_line[0].split(': ')[1] if best_bid_line else "None"
         
         if self.job == 'Buy':
-            prompt = f"""You are a proprietary trader with ${self.balance} trying to make profit by buying low and selling high.
+            prompt = f"""You are a proprietary trader with ${self.balance} evaluating whether to buy a single unit.
 
 {market_context}
 
-CURRENT SITUATION: You currently have NO INVENTORY and are looking to BUY a unit.
+BUY DECISION GUIDELINES:
+- Look for prices below recent averages or your valuation
+- Check liquidity and spread before quoting a bid
+- If asks are absent or overpriced, choose WAIT and reassess
+- Balance execution speed with price quality and risk
 
-IMPORTANT: You MUST make a profit. Your goal is to end with MORE money than you started with.
-
-MARKET EDUCATION:
-- Price ranges typically between $1-$500 in this market
-- Recent average price: {avg_price_str}
-- You started with $500 - consider how your current balance reflects your trading performance
-- Successful prop traders typically aim for small, consistent profits rather than big gambles
-
-TRADER ANALYSIS:
-- Pay attention to which other traders are active and their average prices
-- Analyze their trading patterns and use this information to inform your decisions
-- Consider what their activity might indicate about market conditions
-
-HOW ORDER BOOKS WORK:
-- To BUY: Place a BID order at your desired price
-- If sellers exist at/below your bid price → immediate execution
-- If no sellers at your price → your bid waits on the order book for sellers
-- Higher bids are more likely to execute quickly
-
-TRADING PRINCIPLES TO CONSIDER:
-- "Buy low, sell high" means buying below recent average prices when possible
-- Risk management: avoid spending your entire balance on one trade
-- Learn from history: if recent trades lost money, consider what went wrong
-- Liquidity: sometimes waiting for better prices is smarter than forcing trades
-- Trader behavior: analyze other traders' activity and draw your own conclusions
-
-Respond with ONLY:
-"BUY [exact_price]" - to place a bid at that price
-"WAIT" - to wait for better conditions
-
-No explanation needed."""
+Respond with ONLY: "BUY [price]" (integer dollars) or "WAIT" """
 
         elif self.job == 'Sell':
-            prompt = f"""You are a proprietary trader trying to make profit by buying low and selling high.
+            prompt = f"""You are a proprietary trader with ${self.balance} deciding whether to sell one unit from inventory.
 
 {market_context}
 
-CURRENT SITUATION: You are holding 1 unit that you bought for ${self.last_purchase_price}. You need to SELL it.
+SELL DECISION GUIDELINES:
+- Aim for prices at/above your cost basis or recent averages
+- Evaluate demand and spread before quoting an ask
+- If bids are weak or missing, WAIT for better conditions
+- Balance locking in profit with the value of patience
 
-IMPORTANT: You MUST make a profit. Your goal is to end with MORE money than you started with ($500).
-
-MARKET EDUCATION:
-- Price ranges typically between $1-$500 in this market
-- Recent average price: {avg_price_str}
-- You started with $500 - your current balance shows your trading track record
-- Every sale is an opportunity to learn and improve your strategy
-
-TRADER ANALYSIS:
-- Pay attention to which other traders are active and their average prices
-- Analyze their trading patterns and use this information to inform your decisions
-- Consider what their activity might indicate about market demand
-
-HOW ORDER BOOKS WORK:
-- To SELL: Place an ASK order at your desired price
-- If buyers exist at/above your ask price → immediate execution  
-- If no buyers at your price → your ask waits on the order book for buyers
-- Lower asks are more likely to execute quickly
-
-PROFIT/LOSS ANALYSIS:
-- You bought at: ${self.last_purchase_price}
-- Break-even price: ${self.last_purchase_price}
-- To profit: sell above ${self.last_purchase_price}
-- Current best bid: {best_bid_str} (immediate execution if you ask at/below this)
-
-TRADING PRINCIPLES TO CONSIDER:
-- Profit target: what's a reasonable profit margin for this trade?
-- Risk management: sometimes taking a small loss prevents a bigger loss
-- Market conditions: is the market trending up or down?
-- Patience vs urgency: waiting might get a better price, or price might fall further
-- Learning: what does this trade teach you about timing and pricing?
-- Trader behavior: analyze other traders' activity and draw your own conclusions
-
-Respond with ONLY:
-"SELL [exact_price]" - to place an ask at that price  
-"WAIT" - to wait for better conditions
-
-No explanation needed."""
+Respond with ONLY: "SELL [price]" (integer dollars) or "WAIT" """
 
         else:
             # This shouldn't happen but handle gracefully
@@ -2937,16 +3051,26 @@ No explanation needed."""
         """
         Execute a buy decision with LLM-specified price
         """
-        if lob['asks']['n'] == 0:
-            return  # No asks available
-
         # Ensure we have a valid price from LLM
         buy_price = decision['price']
         if buy_price is None:
             if self.debug_mode:
                 print(f"Warning: {self.tid} BUY decision has no price, skipping")
             return
-        
+
+        # Market making: If NO asks, CREATE the market!
+        if lob['asks']['n'] == 0:
+            if self.debug_mode:
+                print(f"MARKET MAKING: {self.tid} placing BUY order to create liquidity (no asks in market)")
+            # Continue to place buy order even when no asks exist
+        else:
+            # Ensure ask price is reasonable compared to our bid
+            best_ask = lob['asks']['best']
+            if buy_price > best_ask * 1.5:
+                if self.debug_mode:
+                    print(f"Price adjustment: {self.tid} buy price ${buy_price} too high vs best ask ${best_ask}")
+                return
+
         # Only safety check: can we afford it?
         if buy_price <= self.balance:
             order = Order(self.tid, 'Bid', buy_price, 1, time, lob['QID'])
@@ -2974,56 +3098,63 @@ No explanation needed."""
 
     def bookkeep(self, time, trade, order, vrbs):
         """
-        Update trader's records after a successful trade - CRITICAL for state management
+        Update trader's records after a successful trade - supports inventory accumulation
         """
         # Standard bookkeeping
         self.blotter.append(trade)
         self.blotter = self.blotter[-self.blotter_length:]
 
         transactionprice = trade['price']
-        
+        trade_qty = trade['qty']  # Get quantity from trade
+
         if self.orders[0].otype == 'Bid':
-            # Successfully bought a unit
-            self.balance -= transactionprice
+            # Successfully bought units - add to inventory
+            self.balance -= transactionprice * trade_qty
             self.last_purchase_price = transactionprice
-            self.inventory = 1
-            self.job = 'Sell'  # CRITICAL: Switch to selling mode
-            
-            print(f"📦 LLM Trader BOUGHT at ${transactionprice} | Balance: ${self.balance}")
-            
+            self.inventory += trade_qty  # ACCUMULATE inventory instead of setting to 1
+
+            print(f"📦 LLM Trader BOUGHT {trade_qty} unit(s) at ${transactionprice} | Balance: ${self.balance} | Inventory: {self.inventory}")
+
             # Log the state change
             self.trading_history.append({
                 'time': time,
                 'event': 'BOUGHT',
                 'price': transactionprice,
+                'qty': trade_qty,
                 'new_balance': self.balance,
-                'new_job': self.job
+                'inventory': self.inventory,
+                'job': self.job
             })
-            
+
         elif self.orders[0].otype == 'Ask':
-            # Successfully sold a unit
-            old_balance = self.balance
-            self.balance += transactionprice
+            # Successfully sold units - remove from inventory
+            self.balance += transactionprice * trade_qty
+
+            # Calculate profit if we have purchase price info
             if self.last_purchase_price is not None:
-                profit = transactionprice - self.last_purchase_price
+                profit = (transactionprice - self.last_purchase_price) * trade_qty
                 emoji = "🟢" if profit >= 0 else "🔴"
-                print(f"{emoji} LLM Trader SOLD at ${transactionprice} | Profit: ${profit} | Balance: ${self.balance}")
+                print(f"{emoji} LLM Trader SOLD {trade_qty} unit(s) at ${transactionprice} | Profit: ${profit} | Balance: ${self.balance}")
             else:
                 profit = 0  # Fallback if purchase price is missing
-                print(f"🔴 LLM Trader SOLD at ${transactionprice} | No purchase price recorded | Balance: ${self.balance}")
-            
-            self.inventory = 0
-            self.last_purchase_price = None
-            self.job = 'Buy'  # CRITICAL: Switch back to buying mode
-            
+                print(f"🔴 LLM Trader SOLD {trade_qty} unit(s) at ${transactionprice} | No purchase price recorded | Balance: ${self.balance}")
+
+            self.inventory -= trade_qty  # Remove from inventory
+            if self.inventory <= 0:  # Only switch to Buy if out of inventory
+                self.inventory = 0
+                self.last_purchase_price = None
+                self.job = 'Buy'  # Switch back to buying mode only when out of inventory
+
             # Log the state change
             self.trading_history.append({
                 'time': time,
-                'event': 'SOLD', 
+                'event': 'SOLD',
                 'price': transactionprice,
+                'qty': trade_qty,
                 'profit': profit,
                 'new_balance': self.balance,
-                'new_job': self.job
+                'inventory': self.inventory,
+                'job': self.job
             })
 
         # Update trade count and profit per time
@@ -3875,8 +4006,10 @@ No explanation needed."""
         """
         Execute a buy decision with LLM-specified price
         """
+        # Market making: If NO asks, CREATE the market!
         if lob['asks']['n'] == 0:
-            return  # No asks available
+            bg_logger.debug(f"[BG-MARKET-MAKING] {self.tid}: Creating liquidity with BUY order (no asks in market)")
+            # Continue to place buy order even when no asks exist
 
         buy_price = decision['price']
         if buy_price is None:
@@ -4810,8 +4943,10 @@ No explanation needed."""
         """
         Execute a buy decision with LLM-specified price
         """
+        # Market making: If NO asks, CREATE the market!
         if lob['asks']['n'] == 0:
-            return  # No asks available
+            bg_logger.debug(f"[BG-MARKET-MAKING] {self.tid}: Creating liquidity with BUY order (no asks in market)")
+            # Continue to place buy order even when no asks exist
 
         buy_price = decision['price']
         if buy_price is None:
@@ -5767,8 +5902,10 @@ No explanation needed."""
         """
         Execute a buy decision with LLM-specified price
         """
+        # Market making: If NO asks, CREATE the market!
         if lob['asks']['n'] == 0:
-            return  # No asks available
+            bg_logger.debug(f"[BG-MARKET-MAKING] {self.tid}: Creating liquidity with BUY order (no asks in market)")
+            # Continue to place buy order even when no asks exist
 
         buy_price = decision['price']
         if buy_price is None:
@@ -6648,8 +6785,10 @@ No explanation needed."""
         """
         Execute a buy decision with LLM-specified price
         """
+        # Market making: If NO asks, CREATE the market!
         if lob['asks']['n'] == 0:
-            return  # No asks available
+            bg_logger.debug(f"[BG-MARKET-MAKING] {self.tid}: Creating liquidity with BUY order (no asks in market)")
+            # Continue to place buy order even when no asks exist
 
         buy_price = decision['price']
         if buy_price is None:
@@ -7460,8 +7599,10 @@ No explanation needed."""
         """
         Execute a buy decision with LLM-specified price
         """
+        # Market making: If NO asks, CREATE the market!
         if lob['asks']['n'] == 0:
-            return  # No asks available
+            bg_logger.debug(f"[BG-MARKET-MAKING] {self.tid}: Creating liquidity with BUY order (no asks in market)")
+            # Continue to place buy order even when no asks exist
 
         buy_price = decision['price']
         if buy_price is None:
@@ -8372,8 +8513,10 @@ No explanation needed."""
         """
         Execute a buy decision with LLM-specified price
         """
+        # Market making: If NO asks, CREATE the market!
         if lob['asks']['n'] == 0:
-            return  # No asks available
+            bg_logger.debug(f"[BG-MARKET-MAKING] {self.tid}: Creating liquidity with BUY order (no asks in market)")
+            # Continue to place buy order even when no asks exist
 
         buy_price = decision['price']
         if buy_price is None:
@@ -9265,7 +9408,7 @@ def populate_market(trdrs_spec, traders, shuffle, vrbs):
         default_params = trader_config['params']
         
         if balance_type == 'prop':
-            balance = 5000
+            balance = 500  # Give each prop trader 500 starting balance
         else:
             balance = 0.00
             
@@ -9918,10 +10061,21 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
     debug_log_file.write('='*80 + '\n\n')
     debug_log_file.flush()
 
+    respond_log_file = open('logs/game_respond_llm_call.log', 'w', buffering=1)
+    respond_log_file.write(f'🤖 LLM RESPOND CALL LOG - Session: {sess_id}\n')
+    respond_log_file.write(f'Started at: {dt.datetime.now()}\n')
+    respond_log_file.write('='*80 + '\n\n')
+    respond_log_file.flush()
+
     def debug_log(message):
         """Helper function to write to both debug log and optionally console"""
         debug_log_file.write(f'{message}\n')
         debug_log_file.flush()
+
+    def respond_log(message):
+        """Helper function to capture respond() LLM call diagnostics in a separate log"""
+        respond_log_file.write(f'{message}\n')
+        respond_log_file.flush()
 
     debug_log(f'🔍 DEBUG: Order tracking initialized')
     debug_log(f'🔍 DEBUG: Will track BUY vs SELL order execution rates')
@@ -9992,8 +10146,15 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
         debug_log(f'   All available traders: {all_trader_ids}')
         debug_log(f'   Total traders in market: {len(all_trader_ids)}')
 
+        debug_log(f'\n⏳ CALLING getorder() on trader {tid} (type: {traders[tid].ttype})')
+        
+        # Check if this is an LLM trader that might hang
+        if hasattr(traders[tid], 'model') and traders[tid].model is not None:
+            debug_log(f'🤖 LLM TRADER {tid}: About to call getorder() - this will make LLM API calls')
+        
         lob_state = exchange.publish_lob(time, lobframes, lob_verbose)
         order = traders[tid].getorder(time, time_left, lob_state)
+        debug_log(f'✓ getorder() returned for {tid}')
 
         # DEBUG: Log order details and update counters
         if order is not None:
@@ -10083,11 +10244,18 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
                     debug_log(f'   Top 3 Asks: {[ask[1] for ask in current_lob["asks"]["lob"][:3]]}')
 
                 # DEBUG: Log who has orders stored in the LOB
-                debug_log(f'   📋 ORDER BOOK STORAGE:')
+                debug_log(f'   📋 COMPLETE ORDER BOOK:')
                 if current_lob["bids"]["n"] > 0:
-                    debug_log(f'   ACTIVE BUY ORDERS: {[(bid[0], f"${bid[1]}") for bid in current_lob["bids"]["lob"][:5]]}')
+                    all_bids = [(bid[0], f"${bid[1]}") for bid in current_lob["bids"]["lob"]]
+                    debug_log(f'   ALL BUY ORDERS ({len(all_bids)}): {all_bids}')
+                else:
+                    debug_log(f'   ALL BUY ORDERS: None')
+
                 if current_lob["asks"]["n"] > 0:
-                    debug_log(f'   ACTIVE SELL ORDERS: {[(ask[0], f"${ask[1]}") for ask in current_lob["asks"]["lob"][:5]]}')
+                    all_asks = [(ask[0], f"${ask[1]}") for ask in current_lob["asks"]["lob"]]
+                    debug_log(f'   ALL SELL ORDERS ({len(all_asks)}): {all_asks}')
+                else:
+                    debug_log(f'   ALL SELL ORDERS: None')
 
                 # DEBUG: Compare our order with market
                 if order.otype == 'Bid':
@@ -10105,10 +10273,19 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
             lob = exchange.publish_lob(time, lobframes, lob_verbose)
             any_record_frame = False
             for t in traders:
+                trader_type = traders[t].ttype
+                respond_log(f'\n⏳ CALLING respond() on {t} (type: {trader_type}) for belief update')
+                
+                # Check if this is an LLM trader that might hang
+                if hasattr(traders[t], 'model') and traders[t].model is not None:
+                    respond_log(f'🤖 LLM TRADER {t}: About to call respond() - this may involve LLM calls')
+                
                 # NB respond just updates trader's internal variables
                 # doesn't alter the LOB, so processing each trader in
                 # sequence (rather than random/shuffle) isn't a problem
                 record_frame = traders[t].respond(time, lob, trade, respond_verbose)
+                
+                respond_log(f'✓ respond() completed for {t} (type: {trader_type})')
                 if record_frame:
                     any_record_frame = True
 
@@ -10190,10 +10367,13 @@ def market_session(sess_id, starttime, endtime, trader_spec, order_schedule, dum
         if abs(buy_ratio - sell_ratio) > 30:
             print(f'⚠️  MAJOR EXECUTION IMBALANCE DETECTED!')
     print(f'Detailed logs written to: logs/game.log')
+    print(f'LLM respond() call trace written to: logs/game_respond_llm_call.log')
 
     # Close debug log file
     debug_log_file.write(f'\nSession ended at: {dt.datetime.now()}\n')
     debug_log_file.close()
+    respond_log_file.write(f'\nSession ended at: {dt.datetime.now()}\n')
+    respond_log_file.close()
 
     # Get final LOB for current market prices
     final_lob = exchange.publish_lob(time, lobframes, lob_verbose)
@@ -10268,27 +10448,38 @@ AVAILABLE_TRADER_TYPES = {
     'PT1': {'class': 'TraderPT1', 'balance_type': 'prop', 'params': {'bid_percent': 0.95, 'ask_delta': 2, 'n_past_trades': 5}},
     'PT2': {'class': 'TraderPT2', 'balance_type': 'prop', 'params': {'bid_percent': 0.99, 'ask_delta': 2, 'n_past_trades': 5}},
 
-    # Proprietary traders - LLM-Based (7 variants: Baseline + 6 belief graph types, all NL_COT)
+    # Proprietary traders - LLM-Based (various configurations)
     'LLM': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
     'BG_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'BG_JSON_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'BG_NL_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
     'PG_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'PG_JSON_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
     'GV1_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'GV1_JSON_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
     'GV2_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'GV2_JSON_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
     'GV3_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'GV3_JSON_NOCOT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
     'HM_NL_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'HM_JSON_COT': {'class': 'AgentFactory', 'balance_type': 'prop', 'params': {}},
+    'TRADERLLMPROP': {'class': 'TraderLLMProp', 'balance_type': 'prop', 'params': {}},
 }
 
 # CONFIGURATION: Edit these to control which traders are included
-ACTIVE_BUYERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]
-ACTIVE_SELLERS = [('SHVR', 5), ('GVWY', 5), ('ZIC', 2), ('ZIP', 11)]  # Usually same as buyers
+ACTIVE_MARKET_TRADERS = [
+    ('SHVR', 6),
+    ('GVWY', 6),
+    ('ZIC', 3),
+    ('ZIP', 7),
+]
+ACTIVE_BUYERS = list(ACTIVE_MARKET_TRADERS)
+ACTIVE_SELLERS = list(ACTIVE_MARKET_TRADERS)
 ACTIVE_PROPTRADERS = [
-    ('LLM', 1),
-    ('BG_NL_COT', 1),
-    ('PG_NL_COT', 1),
-    ('GV1_NL_COT', 1),
-    ('GV2_NL_COT', 1),
-    ('GV3_NL_COT', 1),
-    ('HM_NL_COT', 1),
+    ('LLM', 1),  # Baseline LLM
+    ('GV1_NL_COT', 1),  # Graph Variant 1 NL + CoT
+    ('GV2_NL_COT', 1),  # Graph Variant 2 NL + CoT
+    ('GV3_NL_COT', 1),  # Graph Variant 3 NL + CoT
 ]
 
 # Automatically generate lists of proprietary trader types for filtering
@@ -10347,6 +10538,9 @@ if __name__ == "__main__":
     start_time = 0.0
     end_time = 60.0 * 60.0 * hours_in_a_day * n_days
     duration = end_time - start_time
+
+    # Increase trading frequency for more interactions
+    order_interval = 0.5  # Reduced from 2 to 0.5 for 4x more frequent orders
 
 
     def schedule_offsetfn_read_file(filename, col_t, col_p, scale_factor=75):
@@ -10495,14 +10689,14 @@ if __name__ == "__main__":
         offsetfn_events = schedule_offsetfn_read_file(price_offset_filename, 0, 1)
 
     # supply schedule (defines the supply curve)
-    range1 = (75, 110, (schedule_offsetfn_from_eventlist, [[end_time, offsetfn_events]]))
+    range1 = (75, 160, (schedule_offsetfn_from_eventlist, [[end_time, offsetfn_events]]))  # Increased supply range to provide more sell-side liquidity
     supply_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range1], 'stepmode': 'random'}]
 
     # demand schedule (defines the demand curve)
     range2 = (125, 90, (schedule_offsetfn_from_eventlist, [[end_time, offsetfn_events]]))
     demand_schedule = [{'from': start_time, 'to': end_time, 'ranges': [range2], 'stepmode': 'random'}]
 
-    order_interval = 2
+    order_interval = 0.5  # Use the increased frequency defined above
 
     # order schedule wraps up the supply/demand schedules and details of how customer orders/assignments are issued
     order_sched = {'sup': supply_schedule, 'dem': demand_schedule,
