@@ -204,7 +204,7 @@ When making trading decisions, USE your belief graph like this:
 DEFAULT: TRADE if you see reasonable opportunity. Small losses (1-3%) are better than missing volume.
 
 ## BELIEF QUALITY FILTER (CRITICAL):
-⚠️ Low-quality beliefs are WORSE than no beliefs!
+Low-quality beliefs are WORSE than no beliefs!
 
 ONLY use beliefs that meet BOTH criteria:
 - Confidence > 0.6 AND
@@ -528,15 +528,15 @@ BELIEF INFERENCE RULES:
 ATTRIBUTE QUALITY REQUIREMENTS:
 
 CREATE attributes that are:
-✅ ACTIONABLE - Helps predict when/where agent will trade
+- ACTIONABLE - Helps predict when/where agent will trade
    Good: "spread_threshold: 5.0" → agent only trades when spread >$5
    Bad: "seems_uncertain" → vague, not actionable
 
-✅ QUANTIFIABLE - Must be a NUMBER (int or float)
+- QUANTIFIABLE - Must be a NUMBER (int or float)
    Good: "cancel_rate: 0.3" → cancels 30% of orders
    Bad: "sometimes_cancels" → not measurable
 
-✅ PREDICTIVE - Explains their trading pattern
+- PREDICTIVE - Explains their trading pattern
    Good: "imitation_score: 0.8" → copies others 80% of time
    Bad: "has_balance" → obvious, not useful
 
@@ -547,14 +547,14 @@ USEFUL ATTRIBUTE EXAMPLES:
 - spread_sensitivity: 5.0 → requires $5 spread to trade
 
 AVOID these useless attributes:
-❌ "trading_sometimes" (vague)
-❌ "market_participant" (obvious)
-❌ "has_strategy" (not specific)
+- "trading_sometimes" (vague)
+- "market_participant" (obvious)
+- "has_strategy" (not specific)
 
 Only propose attributes that would help YOU trade against this agent!
 If you can't think of a useful attribute, update existing ones instead of creating noise.
 
-⚠️ MINIMUM DATA REQUIREMENT:
+##MINIMUM DATA REQUIREMENT:
 ONLY create NEW attributes if you have observed this agent at least 10 times.
 Otherwise, just update existing attributes or return current beliefs unchanged.
 
@@ -658,7 +658,7 @@ DESPERATION LEVEL:
 ONLY update beliefs where you have CLEAR EVIDENCE from this specific event.
 If uncertain, keep the previous "possible" values unchanged.
 
-⚠️ QUALITY THRESHOLD:
+## QUALITY THRESHOLD:
 Do NOT make dramatic classification changes unless you have:
 - At least 5 observations of this agent, AND
 - Strong contradictory evidence (price move >$3 OR completed trade)
@@ -771,7 +771,7 @@ BAYESIAN UPDATE PROCESS:
 3. Decrease other probabilities proportionally to keep sum = 1.0
 4. Cap all probabilities at 0.95 max (maintain uncertainty)
 
-⚠️ CONSERVATIVE UPDATE RULE:
+## CONSERVATIVE UPDATE RULE:
 If you have observed this agent LESS THAN 10 times:
 → Use ONLY weak evidence magnitudes (0.05-0.1)
 → Don't make large updates based on limited data
