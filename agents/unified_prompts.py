@@ -176,6 +176,54 @@ The belief graph tracks competitor behavior patterns and strategic opportunities
 - Size positions by belief confidence; fade low-confidence narratives.
 - Track who consistently provides or takes liquidity to anticipate where price will move fastest.
 - Always sanity-check: if belief-driven bias clashes with tape, wait for alignment.
+
+## ACTIONABLE BELIEF USAGE:
+When making trading decisions, USE your belief graph like this:
+
+1. CHECK VALUATIONS:
+   - If Agent S03 values at $130 (confidence >0.7) and current ask is $132
+   → BUY at $131 (you know they'll accept it)
+   
+2. CHECK AGGRESSIVENESS:
+   - If Agent B11 is aggressive (score >0.6) and bidding at best_bid
+   → You must bid HIGHER to compete (don't match, beat them)
+   
+3. CHECK EVIDENCE COUNT:
+   - High evidence (>5) = reliable belief → trade confidently
+   - Low evidence (<3) = uncertain → be more cautious
+
+4. CHECK MULTIPLE AGENTS:
+   - If 3+ agents value around $128-132
+   → Market consensus is there, trade in that range actively
+   
+5. WHEN TO WAIT:
+   - All beliefs have confidence <0.4 (unclear market)
+   - Spread is extremely wide (>$10)
+   - Evidence conflicts (some say up, some say down)
+   
+DEFAULT: TRADE if you see reasonable opportunity. Small losses (1-3%) are better than missing volume.
+
+## BELIEF QUALITY FILTER (CRITICAL):
+⚠️ Low-quality beliefs are WORSE than no beliefs!
+
+ONLY use beliefs that meet BOTH criteria:
+- Confidence > 0.6 AND
+- Evidence count > 5
+
+If beliefs are weak (confidence <0.6 OR evidence <5):
+→ IGNORE the belief graph and trade based on market data only
+→ Use current LOB prices and recent trades instead
+
+BELIEF VALIDATION:
+Before using a belief, ask: "Does this make sense?"
+- If belief says Agent S03 values at $130 but they're currently selling at $125 → BELIEF IS WRONG, ignore it
+- If belief says aggressive but agent hasn't traded in 30 seconds → BELIEF IS STALE, ignore it
+- If belief contradicts recent market behavior → TRUST THE MARKET, not the belief
+
+Example Decision Logic:
+✓ "Agent S03: valuation $130, confidence 0.8, evidence 7 → TRUST THIS, use for trading"
+✓ "Agent B11: valuation $125, confidence 0.4, evidence 3 → TOO WEAK, ignore belief, use market prices"
+✓ "Agent P07: valuation $140 but just sold at $128 → BELIEF CONTRADICTS MARKET, ignore it"
 """
 
 
@@ -477,6 +525,42 @@ BELIEF INFERENCE RULES:
 5. Focus on beliefs that would explain their trading decisions
 6. Name dimensions based on what you're inferring about THEIR mind, not their behavior
 
+ATTRIBUTE QUALITY REQUIREMENTS:
+
+CREATE attributes that are:
+✅ ACTIONABLE - Helps predict when/where agent will trade
+   Good: "spread_threshold: 5.0" → agent only trades when spread >$5
+   Bad: "seems_uncertain" → vague, not actionable
+
+✅ QUANTIFIABLE - Must be a NUMBER (int or float)
+   Good: "cancel_rate: 0.3" → cancels 30% of orders
+   Bad: "sometimes_cancels" → not measurable
+
+✅ PREDICTIVE - Explains their trading pattern
+   Good: "imitation_score: 0.8" → copies others 80% of time
+   Bad: "has_balance" → obvious, not useful
+
+USEFUL ATTRIBUTE EXAMPLES:
+- front_running: 0.7 → 70% chance to improve best price
+- urgency_threshold: 10 → only trades with <10 seconds left
+- price_sensitivity: 2.0 → needs $2 profit margin minimum
+- spread_sensitivity: 5.0 → requires $5 spread to trade
+
+AVOID these useless attributes:
+❌ "trading_sometimes" (vague)
+❌ "market_participant" (obvious)
+❌ "has_strategy" (not specific)
+
+Only propose attributes that would help YOU trade against this agent!
+If you can't think of a useful attribute, update existing ones instead of creating noise.
+
+⚠️ MINIMUM DATA REQUIREMENT:
+ONLY create NEW attributes if you have observed this agent at least 10 times.
+Otherwise, just update existing attributes or return current beliefs unchanged.
+
+Rationale: New attributes based on <10 observations are unreliable noise.
+Wait for sufficient data before adding complexity.
+
 Update your beliefs about what this agent thinks/intends.
 
 Respond with ONLY a JSON object where ALL dimension values are NUMERIC:
@@ -548,8 +632,39 @@ EXISTING BELIEFS (Discrete Sets):
 {belief_display}
 
 TASK:
-Based on what you observe, identify the POSSIBLE values for this agent's beliefs.
-Use discrete sets to represent uncertainty about their true state.
+Based on this event, classify the agent's state into discrete categories.
+Use CLEAR CRITERIA to decide:
+
+STRATEGY CLASSIFICATION:
+- AGGRESSIVE if: Improves best price by >$2 OR trades >5 times
+  Evidence: Agent bids $135 when best_bid=$132 (+$3 improvement)
+  
+- NEUTRAL if: Bids within $1 of best price AND trades 2-5 times
+  Evidence: Agent bids $132 when best_bid=$131 (following market)
+  
+- PASSIVE if: Rarely improves prices OR waits for counterparty
+  Evidence: Agent bids $128 when best_bid=$132 (waiting, not competitive)
+
+MARKET DIRECTION:
+- UP if: Agent raises bids over time OR aggressive buying behavior
+- DOWN if: Agent lowers asks over time OR aggressive selling
+- SIDEWAYS if: Consistent pricing, no clear trend
+
+DESPERATION LEVEL:
+- DESPERATE if: Rapid trading, tight margins, frequent quote changes
+- MODERATE if: Normal pace, reasonable margins
+- CALM if: Patient, wide margins, selective trading
+
+ONLY update beliefs where you have CLEAR EVIDENCE from this specific event.
+If uncertain, keep the previous "possible" values unchanged.
+
+⚠️ QUALITY THRESHOLD:
+Do NOT make dramatic classification changes unless you have:
+- At least 5 observations of this agent, AND
+- Strong contradictory evidence (price move >$3 OR completed trade)
+
+For weak evidence (small price changes, single quotes):
+- Keep existing classifications unless absolutely certain
 
 For each belief category, list the possible values that are STILL PLAUSIBLE given this observation.
 
@@ -635,8 +750,38 @@ EXISTING BELIEFS (Probability Distributions):
 {belief_display}
 
 TASK:
-Based on what you observe, update the probability distributions for this agent's beliefs.
-Use Bayesian reasoning to assign probabilities to different possible states.
+Update probability distributions using Bayesian reasoning with these MAGNITUDE RULES:
+
+EVIDENCE STRENGTH:
+Strong Evidence (price move >$3, completed trade, rapid action):
+  → Increase relevant probability by 0.3-0.5
+  Example: Agent bids $5 above market → P(aggressive) increases from 0.3 to 0.7
+
+Medium Evidence (price move $1-3, normal quote update):
+  → Increase relevant probability by 0.1-0.2
+  Example: Agent bids $2 above market → P(aggressive) increases from 0.3 to 0.45
+
+Weak Evidence (price move <$1, passive action):
+  → Increase relevant probability by 0.05-0.1
+  Example: Agent matches best_bid → P(neutral) increases from 0.4 to 0.5
+
+BAYESIAN UPDATE PROCESS:
+1. Identify which probability should increase (based on evidence)
+2. Increase it by appropriate magnitude (strong/medium/weak)
+3. Decrease other probabilities proportionally to keep sum = 1.0
+4. Cap all probabilities at 0.95 max (maintain uncertainty)
+
+⚠️ CONSERVATIVE UPDATE RULE:
+If you have observed this agent LESS THAN 10 times:
+→ Use ONLY weak evidence magnitudes (0.05-0.1)
+→ Don't make large updates based on limited data
+→ Keep distributions close to uniform until more evidence accumulates
+
+EXAMPLE:
+Before: {{"aggressive": 0.3, "neutral": 0.5, "passive": 0.2}}
+Event: Agent improves price by $4 (STRONG aggressive signal, +0.4)
+After: {{"aggressive": 0.7, "neutral": 0.2, "passive": 0.1}}
+[aggressive +0.4, others scaled down: 0.5→0.2, 0.2→0.1]
 
 For each belief category, provide a probability distribution (must sum to 1.0).
 
